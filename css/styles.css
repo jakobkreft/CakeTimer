@@ -194,3 +194,22 @@ canvas.segment-hover { cursor: default; }
   cursor: pointer;
 }
 
+/* Icon button for GitHub */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px; height: 32px;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+/* Force exact black/white for the mark to match the request */
+.github-link { color: #000; }
+:root.dark .github-link { color: #fff; }
+
+/* Slight hover affordance */
+.icon-btn:hover { transform: translateY(-1px); color: #358305; }
+.icon-btn:active { transform: translateY(0); }

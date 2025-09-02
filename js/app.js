@@ -83,6 +83,7 @@
   const rootEl = document.documentElement;
   function applyTheme(){ rootEl.classList.toggle('dark', state.theme === 'dark'); }
   applyTheme();
+  setFaviconMode(isRunning());
 
   const dial = document.getElementById('dial');
   const ctx = dial.getContext('2d');
@@ -148,7 +149,9 @@
     state.sessions.push({ start: Date.now(), end: null });
     assignDefaultSessionNamesForToday();
     realignBreakLogsForToday();
-    saveState(); announce('Started'); requestDraw(); updateTagsPanel();
+    saveState();
+    setFaviconMode(true);
+    announce('Started'); requestDraw(); updateTagsPanel();
   }
 
   function stopSession(){
@@ -161,7 +164,9 @@
       last.end = now;
     }
     realignBreakLogsForToday();
-    saveState(); announce('Stopped'); requestDraw(); updateTagsPanel();
+    saveState();
+    setFaviconMode(false);
+    announce('Stopped'); requestDraw(); updateTagsPanel();
   }
 
   function clearToday(){
@@ -1054,6 +1059,21 @@ if (tagsBreakUL) {
   });
 }
 
+// --- Favicon swapper ---
+function setFaviconMode(running){
+  const href = running ? 'favicon1.ico' : 'favicon0.ico';
+  const head = document.head;
+
+  // Remove existing icon links so browsers reliably refresh the favicon
+  head.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]').forEach(el => el.remove());
+
+  // Add fresh icon link (small cache-bust so it updates immediately)
+  const link = document.createElement('link');
+  link.rel  = 'icon';
+  link.type = 'image/x-icon';
+  link.href = `${href}?v=${running ? '0' : '1'}`;
+  head.appendChild(link);
+}
 
 
   // ---------- Helpers ----------
