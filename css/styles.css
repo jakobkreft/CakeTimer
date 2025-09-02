@@ -110,7 +110,7 @@ canvas#dial {
 .welcome { border: var(--line) dashed var(--border); padding: 4px 6px; display: inline-block; margin-bottom: 6px; }
 
 .badges-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.badge-pill { border: var(--line) solid var(--border); padding: 2px 6px; font-size: 12px; }
+.badge-pill {  padding: 2px 6px; font-size: 12px; }
 
 .tags-list { list-style: none; padding: 0; margin: 0; }
 .tags-list li { display: flex; justify-content: space-between; border-bottom: var(--line) dotted var(--border); padding: 2px 0; }
