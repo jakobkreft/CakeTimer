@@ -83,7 +83,12 @@ body {
 }
 @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
 
-.dial-section { display: grid; place-items: center; }
+.dial-section {
+  display: grid;
+  justify-items: center; /* horizontal centering only */
+  align-items: start;
+}
+
 canvas#dial {
   width: min(90%, 90vmin);
   height: auto;
