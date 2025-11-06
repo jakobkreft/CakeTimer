@@ -7,18 +7,93 @@
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <h1>WEEKLY REVIEW</h1>
-    <nav>
+  <header class="topbar review-topbar">
+    <div class="left">
+      <h1>WEEKLY REVIEW</h1>
+    </div>
+    <nav class="topbar-right">
       <a class="link" href="index.html">BACK</a>
+      <button id="infoBtnReview" class="info-btn" data-info-trigger aria-haspopup="dialog" aria-controls="infoPanel" aria-expanded="false">INFO</button>
+      <a class="icon-btn github-link" href="https://github.com/jakobkreft/CakeTimer" target="_blank" rel="noopener" aria-label="View source on GitHub" title="GitHub">
+        <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true">
+          <g transform="translate(0.24 0.24)">
+            <g transform="scale(0.97)">
+              <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38
+              0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01
+              1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95
+              0-.87.31-1.59.82-2.15-.08-.2-.36-1.01.08-2.1 0 0 .67-.21 2.2.82a7.62 7.62 0 0 1 2-.27c.68 0 1.36.09 2 .27
+              1.53-1.04 2.2-.82 2.2-.82.44 1.09.16 1.9.08 2.1.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48
+              0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+            </g>
+          </g>
+        </svg>
+      </a>
     </nav>
   </header>
 
   <main class="review-layout">
-    <section id="weeks" class="weeks"></section>
+    <section id="reviewEmptyState" class="review-section empty-state" hidden>
+      <h2>No history yet</h2>
+      <p>Your review will appear once you log work sessions or breaks. Start the timer on the main page to build up insights.</p>
+    </section>
+
+    <section id="summarySection" class="review-section summary-section">
+      <div class="section-title">
+        <h2>Overview</h2>
+        <span id="rangeLabel" class="range-label"></span>
+      </div>
+      <div id="overviewCards" class="summary-grid"></div>
+    </section>
+
+    <section id="timelineSection" class="review-section timeline-section">
+      <div class="section-title">
+        <h2>Daily Timeline</h2>
+        <span class="section-hint">Mini cakes reflect your current tag colors.</span>
+      </div>
+      <div id="dailyList" class="timeline-list"></div>
+    </section>
+
+    <section id="weeklySection" class="review-section period-section">
+      <div class="section-title">
+        <h2>Weekly Stats</h2>
+        <span class="section-hint">Goal hits, averages, and top tags for each week.</span>
+      </div>
+      <div id="weeklyStats" class="period-grid"></div>
+    </section>
+
+    <section id="monthlySection" class="review-section period-section">
+      <div class="section-title">
+        <h2>Monthly Stats</h2>
+      </div>
+      <div id="monthlyStats" class="period-grid"></div>
+    </section>
+
+    <section id="tagSection" class="review-section stats-section">
+      <div class="section-title">
+        <h2>Tag Insights</h2>
+      </div>
+      <div id="tagStats" class="stat-list"></div>
+    </section>
+
+    <section id="breakSection" class="review-section stats-section">
+      <div class="section-title">
+        <h2>Break Insights</h2>
+      </div>
+      <div id="breakStats" class="stat-list"></div>
+    </section>
   </main>
+
+  <aside id="infoPanel" class="info-panel" role="dialog" aria-modal="true" aria-labelledby="infoPanelTitle" hidden>
+    <div class="info-panel__content">
+      <button type="button" class="info-panel__close" aria-label="Close info">×</button>
+      <h2 id="infoPanelTitle">24H Cake Timer</h2>
+      <p>A minimalist 24-hour focus tracker that lets you log deep work sessions, tag slices, monitor streaks, and plan todos – all stored locally in your browser.</p>
+      <p>The review dashboard surfaces daily, weekly, and monthly stats so you can reflect on progress, balance breaks, and celebrate streaks.</p>
+      <p><strong>Source Code:</strong> <a href="https://github.com/jakobkreft/CakeTimer" target="_blank" rel="noopener">github.com/jakobkreft/CakeTimer</a><br />
+         <strong>Feedback:</strong> <a href="https://github.com/jakobkreft/CakeTimer/issues" target="_blank" rel="noopener">Share your thoughts on GitHub Issues</a></p>
+    </div>
+  </aside>
 
   <script src="js/review.js"></script>
 </body>
 </html>
-

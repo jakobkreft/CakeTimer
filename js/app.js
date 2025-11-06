@@ -42,6 +42,172 @@
     return { start, end: start + msPerDay };
   };
 
+  // ---------- Color utilities ----------
+  const tagColorCache = new Map();
+  const DEFAULT_ACCENT = '#16a34a';
+  const colorParserCtx = (() => {
+    try {
+      return document.createElement('canvas').getContext('2d');
+    } catch {
+      return null;
+    }
+  })();
+
+  function resolveColorInfo(color){
+    if (!colorParserCtx) return null;
+    try {
+      colorParserCtx.fillStyle = color;
+      const normalized = colorParserCtx.fillStyle;
+      if (!normalized) return null;
+      if (normalized.startsWith('#')){
+        return hexToRgb(normalized);
+      }
+      const match = normalized.match(/rgba?\(([^)]+)\)/i);
+      if (match){
+        const parts = match[1].split(',').map(part => parseFloat(part.trim()));
+        if (parts.length >= 3){
+          return { r: parts[0], g: parts[1], b: parts[2], normalized };
+        }
+      }
+    } catch {}
+    return null;
+  }
+
+  function hexToRgb(hex){
+    let h = hex.replace('#','');
+    if (h.length === 3){
+      h = h.split('').map(ch=>ch+ch).join('');
+    }
+    if (h.length !== 6) return null;
+    const r = parseInt(h.slice(0,2),16);
+    const g = parseInt(h.slice(2,4),16);
+    const b = parseInt(h.slice(4,6),16);
+    if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return null;
+    return { r, g, b, normalized: `#${h}` };
+  }
+
+  function rgbToHsl(r, g, b){
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r,g,b), min = Math.min(r,g,b);
+    let h, s;
+    const l = (max + min) / 2;
+    if (max === min){
+      h = s = 0;
+    } else {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch(max){
+        case r: h = ((g - b) / d + (g < b ? 6 : 0)); break;
+        case g: h = ((b - r) / d + 2); break;
+        default: h = ((r - g) / d + 4); break;
+      }
+      h /= 6;
+    }
+    return [h * 360, s || 0, l];
+  }
+
+  function hslToRgb(h, s, l){
+    h = ((h % 360) + 360) % 360;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const hp = h / 60;
+    const x = c * (1 - Math.abs((hp % 2) - 1));
+    let r1 = 0, g1 = 0, b1 = 0;
+    if (hp >= 0 && hp < 1){ r1 = c; g1 = x; }
+    else if (hp < 2){ r1 = x; g1 = c; }
+    else if (hp < 3){ g1 = c; b1 = x; }
+    else if (hp < 4){ g1 = x; b1 = c; }
+    else if (hp < 5){ r1 = x; b1 = c; }
+    else { r1 = c; b1 = x; }
+    const m = l - c/2;
+    return [
+      Math.round((r1 + m) * 255),
+      Math.round((g1 + m) * 255),
+      Math.round((b1 + m) * 255)
+    ];
+  }
+
+  function hslToRgbString(h, s, l){
+    const [r,g,b] = hslToRgb(h,s,l);
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+
+  function rgbToHex(r, g, b){
+    const toHex = (n) => Math.max(0, Math.min(255, n)).toString(16).padStart(2,'0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+
+  function hashString(str){
+    let h = 2166136261;
+    for (let i=0; i<str.length; i++){
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+
+  function normalizeTagKey(tag){
+    return (typeof tag === 'string' && tag.trim())
+      ? tag.trim().toLowerCase()
+      : '';
+  }
+
+  function decodeTagIdentifier(val){
+    if (typeof val !== 'string') return '';
+    try { return decodeURIComponent(val); }
+    catch { return val; }
+  }
+
+  const COLOR_PICKER_SAT = 0.85;
+  const COLOR_PICKER_LIGHT_MIN = 0.2;
+  const COLOR_PICKER_LIGHT_RANGE = 0.6;
+
+  const defaultAccentInfo = resolveColorInfo(DEFAULT_ACCENT) || { r: 22, g: 163, b: 74, normalized: DEFAULT_ACCENT };
+  const defaultAccentMeta = {
+    accentKey: defaultAccentInfo.normalized || DEFAULT_ACCENT,
+    baseHsl: rgbToHsl(defaultAccentInfo.r, defaultAccentInfo.g, defaultAccentInfo.b),
+  };
+
+  function resolveAccentMeta(accent){
+    const info = resolveColorInfo(accent);
+    if (!info) return defaultAccentMeta;
+    return {
+      accentKey: info.normalized || accent,
+      baseHsl: rgbToHsl(info.r, info.g, info.b),
+    };
+  }
+
+  function jitterColorFromAccent(baseHsl, key){
+    const [baseH, baseS, baseL] = baseHsl;
+    const hash = hashString(key || '');
+    const hueShift = ((hash & 0xff) / 255 - 0.5) * 40;
+    const satShift = (((hash >>> 8) & 0xff) / 255 - 0.5) * 0.4;
+    const lightShift = (((hash >>> 16) & 0xff) / 255 - 0.5) * 0.34;
+    const h = (baseH + hueShift + 360) % 360;
+    const s = clamp(baseS + satShift, 0.2, 0.95);
+    const l = clamp(baseL + lightShift, 0.2, 0.7);
+    return hslToRgbString(h, s, l);
+  }
+
+  function colorForTag(tag, fallbackKey, accentMeta){
+    const keyTag = normalizeTagKey(tag);
+    const keyFallback = normalizeTagKey(fallbackKey);
+    const overrides = state?.tagColors || {};
+    if (keyTag && overrides && overrides[keyTag]){
+      return overrides[keyTag];
+    }
+    if (!keyTag && keyFallback && overrides && overrides[keyFallback]){
+      return overrides[keyFallback];
+    }
+    const cacheKey = `${accentMeta.accentKey}|${keyTag || keyFallback || 'untagged'}`;
+    let color = tagColorCache.get(cacheKey);
+    if (!color){
+      const jitterKey = keyTag || keyFallback || 'untagged';
+      color = jitterColorFromAccent(accentMeta.baseHsl, jitterKey);
+      tagColorCache.set(cacheKey, color);
+    }
+    return color;
+  }
+
   // ---------- Storage ----------
   const STORE_KEY = 'ot.v3.state';
 
@@ -54,6 +220,7 @@
     theme: 'light',
     streak: { current: 0, best: 0, lastDay: null },
     badges: [],
+    tagColors: {},
     todos: []                    // [{id,text,done,created,completedAt?}]
   };
 }
@@ -71,6 +238,14 @@
       for (const b of base.breakLogs) { if (typeof b.tagTs !== 'number') b.tagTs = Math.round((b.start + b.end) / 2); }
       base.streak      = s.streak && typeof s.streak==='object' ? s.streak : base.streak;
       base.badges      = Array.isArray(s.badges) ? s.badges : [];
+      if (s.tagColors && typeof s.tagColors === 'object') {
+        base.tagColors = {};
+        for (const [k,v] of Object.entries(s.tagColors)){
+          if (typeof v !== 'string' || !v) continue;
+          const nk = normalizeTagKey(k);
+          if (nk) base.tagColors[nk] = v;
+        }
+      }
       base.todos       = Array.isArray(s.todos) ? s.todos : [];
       base.version     = 4;
     } catch {}
@@ -84,9 +259,58 @@
   function applyTheme(){ rootEl.classList.toggle('dark', state.theme === 'dark'); }
   applyTheme();
   setFaviconMode(isRunning());
-
   const dial = document.getElementById('dial');
-  const ctx = dial.getContext('2d');
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const DIAL_SIZE = 1000;
+  const DIAL_CENTER = DIAL_SIZE / 2;
+  const DIAL_RADIUS = DIAL_SIZE * 0.45;
+  function createSvgElement(tag){
+    return document.createElementNS(SVG_NS, tag);
+  }
+  const baseCircle = createSvgElement('circle');
+  baseCircle.setAttribute('cx', DIAL_CENTER);
+  baseCircle.setAttribute('cy', DIAL_CENTER);
+  baseCircle.setAttribute('r', DIAL_RADIUS);
+  baseCircle.setAttribute('pointer-events', 'none');
+
+  const progressPath = createSvgElement('path');
+  progressPath.setAttribute('pointer-events', 'none');
+
+  const workGroup = createSvgElement('g');
+  workGroup.setAttribute('pointer-events', 'none');
+  workGroup.setAttribute('fill', 'none');
+
+  const hourGroup = createSvgElement('g');
+  hourGroup.setAttribute('pointer-events', 'none');
+  hourGroup.setAttribute('fill', 'none');
+  hourGroup.setAttribute('stroke-linecap', 'round');
+  hourGroup.style.mixBlendMode = 'difference';
+
+  const textGroup = createSvgElement('g');
+  textGroup.setAttribute('pointer-events', 'none');
+  textGroup.style.mixBlendMode = 'difference';
+
+  function createCenteredText(yOffset){
+    const t = createSvgElement('text');
+    t.setAttribute('x', DIAL_CENTER);
+    t.setAttribute('y', (DIAL_CENTER + yOffset).toString());
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('dominant-baseline', 'middle');
+    t.setAttribute('fill', '#ffffff');
+    t.setAttribute('font-family', 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace');
+    textGroup.appendChild(t);
+    return t;
+  }
+  const workedTextSvg  = createCenteredText(0);
+  const goalTextSvg    = createCenteredText(DIAL_SIZE * 0.055);
+  const sessionTextSvg = createCenteredText(DIAL_SIZE * 0.115);
+  sessionTextSvg.style.display = 'none';
+
+  dial.appendChild(baseCircle);
+  dial.appendChild(progressPath);
+  dial.appendChild(workGroup);
+  dial.appendChild(hourGroup);
+  dial.appendChild(textGroup);
 
   // Side controls
   const toggleBtn = document.getElementById('toggleBtn');
@@ -112,9 +336,176 @@
   const addTodoBtn = document.getElementById('addTodo');
   const todosUL    = document.getElementById('todosList');
 
+  const infoPanel = document.getElementById('infoPanel');
+  const infoCloseBtn = infoPanel ? infoPanel.querySelector('.info-panel__close') : null;
+  const infoTriggers = Array.from(document.querySelectorAll('[data-info-trigger]'));
+  let infoReturnFocus = null;
+  let savedBodyOverflow = null;
+
+  function setInfoExpanded(expanded){
+    infoTriggers.forEach(btn => btn.setAttribute('aria-expanded', expanded ? 'true' : 'false'));
+  }
+
+  function openInfo(trigger){
+    if (!infoPanel || !infoPanel.hidden) return;
+    infoReturnFocus = trigger || null;
+    infoPanel.hidden = false;
+    setInfoExpanded(true);
+    savedBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    infoPanel.focus({ preventScroll: true });
+  }
+
+  function closeInfo(){
+    if (!infoPanel || infoPanel.hidden) return;
+    infoPanel.hidden = true;
+    setInfoExpanded(false);
+    document.body.style.overflow = savedBodyOverflow || '';
+    savedBodyOverflow = null;
+    if (infoReturnFocus) infoReturnFocus.focus();
+    infoReturnFocus = null;
+  }
+
+  if (infoPanel){
+    infoPanel.setAttribute('tabindex', '-1');
+    infoPanel.addEventListener('click', (e)=>{ if (e.target === infoPanel) closeInfo(); });
+  }
+
+  if (infoCloseBtn) infoCloseBtn.addEventListener('click', closeInfo);
+  infoTriggers.forEach(btn => btn.addEventListener('click', ()=> {
+    if (!infoPanel) return;
+    if (infoPanel.hidden) openInfo(btn);
+    else closeInfo();
+  }));
+
+  document.addEventListener('keydown', (e)=>{
+    if (e.key === 'Escape' && infoPanel && !infoPanel.hidden){
+      e.preventDefault();
+      closeInfo();
+    }
+  });
+
 
 
   const tip = document.createElement('div'); tip.className = 'tooltip'; tip.style.display='none'; document.body.appendChild(tip);
+
+  const colorPicker = document.createElement('div');
+  colorPicker.className = 'color-picker';
+  colorPicker.hidden = true;
+  const colorGradient = document.createElement('div');
+  colorGradient.className = 'color-picker-gradient';
+  const colorActions = document.createElement('div');
+  colorActions.className = 'color-picker-actions';
+  const autoColorBtn = document.createElement('button');
+  autoColorBtn.type = 'button';
+  autoColorBtn.className = 'color-picker-auto';
+  autoColorBtn.textContent = 'Auto color';
+  colorActions.appendChild(autoColorBtn);
+  colorPicker.appendChild(colorGradient);
+  colorPicker.appendChild(colorActions);
+  document.body.appendChild(colorPicker);
+
+  function applyColorPickerGradient(){
+    const steps = 24;
+    const stops = [];
+    for (let i = 0; i <= steps; i++){
+      const ratio = i / steps;
+      const hue = ratio * 360;
+      const lightness = COLOR_PICKER_LIGHT_MIN + COLOR_PICKER_LIGHT_RANGE * 0.6;
+      const [r,g,b] = hslToRgb(hue, COLOR_PICKER_SAT, lightness);
+      stops.push(`${rgbToHex(r,g,b)} ${ratio * 100}%`);
+    }
+    const hueGradient = `linear-gradient(90deg, ${stops.join(', ')})`;
+    const shadowGradient = 'linear-gradient(to top, rgba(0,0,0,0.45), rgba(0,0,0,0))';
+    const highlightGradient = 'linear-gradient(to bottom, rgba(255,255,255,0.5), rgba(255,255,255,0))';
+    colorGradient.style.backgroundImage = `${shadowGradient}, ${highlightGradient}, ${hueGradient}`;
+  }
+  applyColorPickerGradient();
+
+  let colorPickerState = { tag: null, tagKey: null };
+
+  function closeColorPicker(){
+    if (colorPicker.hidden) return;
+    colorPicker.hidden = true;
+    colorPickerState = { tag: null, tagKey: null };
+  }
+
+  function openColorPicker(tag, anchorEl){
+    const key = normalizeTagKey(tag);
+    if (!key) return;
+    colorPickerState = { tag, tagKey: key };
+    const rect = anchorEl.getBoundingClientRect();
+    const scrollX = window.scrollX || document.documentElement.scrollLeft || 0;
+    const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+    const pickerWidth = 220;
+    let left = rect.left + scrollX + rect.width / 2 - pickerWidth / 2;
+    const viewportLeft = scrollX + 8;
+    const viewportRight = scrollX + window.innerWidth - pickerWidth - 8;
+    if (left < viewportLeft) left = viewportLeft;
+    if (left > viewportRight) left = viewportRight;
+    const top = rect.bottom + scrollY + 8;
+    colorPicker.style.left = `${left}px`;
+    colorPicker.style.top = `${top}px`;
+    colorPicker.hidden = false;
+  }
+
+  function setTagColorOverride(tagKey, color){
+    if (!tagKey) return;
+    if (!state.tagColors) state.tagColors = {};
+    if (color){
+      state.tagColors[tagKey] = color;
+    } else {
+      delete state.tagColors[tagKey];
+    }
+    tagColorCache.clear();
+    saveState();
+    requestDraw();
+    updateTagsPanel();
+  }
+
+  colorGradient.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    if (!colorPickerState.tagKey){
+      closeColorPicker();
+      return;
+    }
+    const rect = colorGradient.getBoundingClientRect();
+    if (!rect.width || !rect.height){
+      closeColorPicker();
+      return;
+    }
+    const x = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+    const y = clamp((e.clientY - rect.top) / rect.height, 0, 1);
+    const hue = x * 360;
+    const lightness = COLOR_PICKER_LIGHT_MIN + (1 - y) * COLOR_PICKER_LIGHT_RANGE;
+    const [r,g,b] = hslToRgb(hue, COLOR_PICKER_SAT, lightness);
+    const hex = rgbToHex(r,g,b);
+    setTagColorOverride(colorPickerState.tagKey, hex);
+    closeColorPicker();
+  });
+
+  autoColorBtn.addEventListener('click', (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    if (colorPickerState.tagKey){
+      setTagColorOverride(colorPickerState.tagKey, null);
+    }
+    closeColorPicker();
+  });
+
+  document.addEventListener('click', (e)=>{
+    if (colorPicker.hidden) return;
+    if (colorPicker.contains(e.target)) return;
+    if (e.target.closest('.tag-swatch')) return;
+    closeColorPicker();
+  });
+
+  document.addEventListener('keydown', (e)=>{
+    if (e.key === 'Escape') closeColorPicker();
+  });
+
+  window.addEventListener('resize', closeColorPicker);
+  window.addEventListener('scroll', closeColorPicker, true);
 
   // ---------- First-open-of-day streak handling ----------
   (function handleDailyStreak(){
@@ -188,7 +579,15 @@
   }
 
   function setGoal(mins){ state.goalMinutes = clamp(Math.round(mins),0,24*60); saveState(); requestDraw(); }
-  function toggleTheme(){ state.theme = (state.theme==='dark') ? 'light' : 'dark'; applyTheme(); saveState(); }
+  function toggleTheme(){
+    state.theme = (state.theme==='dark') ? 'light' : 'dark';
+    applyTheme();
+    tagColorCache.clear();
+    saveState();
+    requestDraw();
+    updateTagsPanel();
+    closeColorPicker();
+  }
 
   // Graceful stop on close
   let _closingHandled = false;
@@ -211,13 +610,24 @@
   function announce(msg){ statusEl.textContent = msg; }
 
   // ---------- Geometry ----------
-  function resizeCanvasToDisplaySize(canvas){
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
-    if (canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; return true; }
-    return false;
-  }
   const tau2 = Math.PI * 2;
+  function polarToCartesian(cx, cy, r, angle){
+    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+  }
+  const fullCirclePath = (() => {
+    const cx = DIAL_CENTER, cy = DIAL_CENTER, r = DIAL_RADIUS;
+    return `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx} ${cy + r} A ${r} ${r} 0 1 1 ${cx} ${cy - r} Z`;
+  })();
+  function slicePath(startAngle, endAngle){
+    let delta = endAngle - startAngle;
+    while (delta < 0) delta += tau2;
+    if (delta < 1e-4) return '';
+    if (Math.abs(delta - tau2) < 1e-4) return fullCirclePath;
+    const start = polarToCartesian(DIAL_CENTER, DIAL_CENTER, DIAL_RADIUS, startAngle);
+    const end   = polarToCartesian(DIAL_CENTER, DIAL_CENTER, DIAL_RADIUS, endAngle);
+    const largeArc = delta > Math.PI ? 1 : 0;
+    return `M ${DIAL_CENTER} ${DIAL_CENTER} L ${start.x} ${start.y} A ${DIAL_RADIUS} ${DIAL_RADIUS} 0 ${largeArc} 1 ${end.x} ${end.y} Z`;
+  }
   function angleFromPoint(x,y,cx,cy){ let a=Math.atan2(y-cy, x-cx); a -= (-Math.PI/2); return (a%tau2 + tau2)%tau2; }
   function angleFromTime(ms, dayStart){ const seconds = (ms - dayStart)/1000; return (seconds/86400)*tau2; }
   function timeFromAngle(theta, dayStart){ const seconds = theta/tau2*86400; return dayStart + Math.round(seconds)*1000; }
@@ -313,20 +723,6 @@
     if (changed) saveState();
   }
 
-  // ---------- Union minutes for cake ----------
-  const minuteRangesForDay = (dayStart, segs) => {
-    const ranges = segs.map(seg=>[
-      clamp(Math.floor((seg.startMs - dayStart)/msPerMinute), 0, 1440),
-      clamp(Math.ceil ((seg.endMs   - dayStart)/msPerMinute), 0, 1440)
-    ]).sort((a,b)=>a[0]-b[0]);
-    const merged=[];
-    for (const r of ranges){
-      if (!merged.length || r[0] > merged[merged.length-1][1]) merged.push(r.slice());
-      else merged[merged.length-1][1] = Math.max(merged[merged.length-1][1], r[1]);
-    }
-    return merged;
-  };
-
   function preciseWorkedSeconds(dayStart){
     const dayEnd = dayStart + msPerDay;
     let total=0; const nowMs=Date.now();
@@ -345,12 +741,14 @@
   let downXY = {x:0,y:0};
   let hoverDial = false;
 
-  function findHover(x,y){
-    const w=dial.width,h=dial.height,cx=w/2,cy=h/2,R=Math.min(w,h)*0.45;
-    const theta = angleFromPoint(x,y,cx,cy);
+  function findHover(x, y, unitsPerPixel){
+    const cx = DIAL_CENTER;
+    const cy = DIAL_CENTER;
+    const R = DIAL_RADIUS;
+    const theta = angleFromPoint(x, y, cx, cy);
     const { start: dayStart } = todayBounds(new Date());
     const segs = segmentsForDay(dayStart, Date.now(), getSessionsForCalc());
-    const threshold = 8 / R;
+    const threshold = (8 * unitsPerPixel) / R;
     let segIndex=-1, nearEdge=null;
     for (let i=0;i<segs.length;i++){
       const a0 = angleFromTime(segs[i].startMs, dayStart);
@@ -452,9 +850,10 @@
   // Pointer interactions: drag edges OR click to toggle (inside cake)
   dial.addEventListener('pointermove', (e)=>{
     const rect = dial.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * (dial.width / rect.width);
-    const y = (e.clientY - rect.top) * (dial.height / rect.height);
-    const res = findHover(x,y);
+    const unitsPerPixel = DIAL_SIZE / rect.width;
+    const x = (e.clientX - rect.left) * unitsPerPixel;
+    const y = (e.clientY - rect.top) * unitsPerPixel;
+    const res = findHover(x, y, unitsPerPixel);
 
     const dayStart = res.dayStart;
     const nowMs = Date.now();
@@ -516,9 +915,10 @@
 
   dial.addEventListener('pointerdown', (e)=>{
     const rect = dial.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * (dial.width / rect.width);
-    const y = (e.clientY - rect.top) * (dial.height / rect.height);
-    const { segIndex, nearEdge } = findHover(x,y);
+    const unitsPerPixel = DIAL_SIZE / rect.width;
+    const x = (e.clientX - rect.left) * unitsPerPixel;
+    const y = (e.clientY - rect.top) * unitsPerPixel;
+    const { segIndex, nearEdge } = findHover(x, y, unitsPerPixel);
     downXY = {x,y};
     tip.style.display='none';
     clickPending = true;
@@ -549,9 +949,10 @@
     // toggle start/stop on click inside cake
     if (clickPending){
       const rect = dial.getBoundingClientRect();
-      const x = (e.clientX - rect.left) * (dial.width / rect.width);
-      const y = (e.clientY - rect.top) * (dial.height / rect.height);
-      const w=dial.width,h=dial.height,cx=w/2,cy=h/2,R=Math.min(w,h)*0.45;
+      const unitsPerPixel = DIAL_SIZE / rect.width;
+      const x = (e.clientX - rect.left) * unitsPerPixel;
+      const y = (e.clientY - rect.top) * unitsPerPixel;
+      const cx = DIAL_CENTER, cy = DIAL_CENTER, R = DIAL_RADIUS;
       if (Math.hypot(x - cx, y - cy) <= R) toggleTimer();
     }
     clickPending = false;
@@ -658,79 +1059,113 @@
 
   function drawDial(){
     pendingDraw=false;
-    resizeCanvasToDisplaySize(dial);
-    const w=dial.width, h=dial.height, cx=w/2, cy=h/2;
-    const R = Math.min(w,h)*0.45;
 
-    ctx.clearRect(0,0,w,h);
-    ctx.save();
-    ctx.translate(cx,cy);
+    const styles = getComputedStyle(document.documentElement);
+    const ringBg = styles.getPropertyValue('--ring-bg').trim() || '#ffffff';
+    const progressFill = styles.getPropertyValue('--progress').trim() || '#e5e7e0';
+    const accentFill = styles.getPropertyValue('--accent').trim() || '#16a34a';
 
-    // base disk
-    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ring-bg').trim();
-    ctx.beginPath(); ctx.arc(0,0,R,0,Math.PI*2); ctx.fill();
+    baseCircle.setAttribute('fill', ringBg);
 
-    // day progress wedge
+    const rect = dial.getBoundingClientRect();
+    const unitsPerPixel = rect.width ? (DIAL_SIZE / rect.width) : 1;
+    const pxPerUnit = rect.width ? (rect.width / DIAL_SIZE) : 0;
+
     const { start: dayStart } = todayBounds(new Date());
     assignDefaultSessionNamesForToday();
     realignBreakLogsForToday();
 
     const now = Date.now();
     const nowTheta = ((now - dayStart)/msPerDay)*(Math.PI*2) - Math.PI/2;
-    const progressFill = getComputedStyle(document.documentElement).getPropertyValue('--progress').trim();
-    ctx.fillStyle = progressFill;
-    ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,R,-Math.PI/2, nowTheta, false); ctx.closePath(); ctx.fill();
+    const progressD = slicePath(-Math.PI/2, nowTheta);
+    if (progressD){
+      progressPath.setAttribute('d', progressD);
+      progressPath.setAttribute('fill', progressFill);
+      progressPath.style.display = '';
+    } else {
+      progressPath.removeAttribute('d');
+      progressPath.style.display = 'none';
+    }
 
-    // work slices
     const segs = segmentsForDay(dayStart, now, getSessionsForCalc());
-    const ranges = minuteRangesForDay(dayStart, segs);
-    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-    for (const [m0,m1] of ranges){
-      const a0=(m0/1440)*(Math.PI*2) - Math.PI/2, a1=(m1/1440)*(Math.PI*2) - Math.PI/2;
-      ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,R,a0,a1,false); ctx.closePath(); ctx.fill();
-    }
-
-    // hour ticks (invert) on hover
-    if (hoverDial) {
-      ctx.save();
-      ctx.rotate(-Math.PI/2);
-      ctx.globalCompositeOperation = 'difference';
-      ctx.strokeStyle = '#ffffff';
-      const thin = Math.max(1, Math.round(R*0.006));
-      ctx.lineWidth = thin;
-      for (let hr=0; hr<24; hr++){
-        const a=(hr/24)*(Math.PI*2);
-        const r0=R*0.955, r1=R*0.985;
-        ctx.beginPath();
-        ctx.moveTo(Math.cos(a)*r0, Math.sin(a)*r0);
-        ctx.lineTo(Math.cos(a)*r1, Math.sin(a)*r1);
-        ctx.stroke();
+    const accentMeta = resolveAccentMeta(accentFill);
+    if (segs.length){
+      const frag = document.createDocumentFragment();
+      for (const seg of segs){
+        const startAngle = angleFromTime(seg.startMs, dayStart) - Math.PI/2;
+        const endAngle = angleFromTime(seg.endMs, dayStart) - Math.PI/2;
+        const d = slicePath(startAngle, endAngle);
+        if (!d) continue;
+        const path = createSvgElement('path');
+        const tagForColor = (typeof seg.tag === 'string' && seg.tag.trim()) ? seg.tag.trim() : '';
+        const fallbackKey = `session-${seg.sessionIndex}`;
+        const fillColor = colorForTag(tagForColor, fallbackKey, accentMeta);
+        path.setAttribute('d', d);
+        path.setAttribute('fill', fillColor);
+        frag.appendChild(path);
       }
-      ctx.restore();
+      workGroup.replaceChildren(frag);
+    } else {
+      workGroup.replaceChildren();
     }
 
-    // center text (invert)
+    if (hoverDial){
+      const frag = document.createDocumentFragment();
+      for (let hr=0; hr<24; hr++){
+        const a=(hr/24)*(Math.PI*2) - Math.PI/2;
+        const inner = polarToCartesian(DIAL_CENTER, DIAL_CENTER, DIAL_RADIUS*0.955, a);
+        const outer = polarToCartesian(DIAL_CENTER, DIAL_CENTER, DIAL_RADIUS*0.985, a);
+        const line = createSvgElement('line');
+        line.setAttribute('x1', inner.x);
+        line.setAttribute('y1', inner.y);
+        line.setAttribute('x2', outer.x);
+        line.setAttribute('y2', outer.y);
+        frag.appendChild(line);
+      }
+      hourGroup.replaceChildren(frag);
+      const renderRadiusPx = DIAL_RADIUS * pxPerUnit;
+      const thinPx = Math.max(1, Math.round(renderRadiusPx * 0.006));
+      const strokeUnits = thinPx * unitsPerPixel;
+      hourGroup.setAttribute('stroke-width', strokeUnits || 1);
+      hourGroup.setAttribute('stroke', '#ffffff');
+      hourGroup.style.display = '';
+    } else {
+      hourGroup.replaceChildren();
+      hourGroup.style.display = 'none';
+    }
+
     const workedSeconds = preciseWorkedSeconds(dayStart);
-    const workedMinutes = workedSeconds/60;
-    const goal = state.goalMinutes, remaining = Math.max(0, goal - workedMinutes);
+    const workedMinutes = workedSeconds / 60;
+    const goal = state.goalMinutes;
+    const remaining = Math.max(0, goal - workedMinutes);
     const running = isRunning();
     const last = state.sessions[state.sessions.length-1];
-    const liveMs = running ? (Date.now() - last.start) : 0;
+    const liveMs = running && last ? (Date.now() - last.start) : 0;
 
-    ctx.textAlign='center';
-    ctx.textBaseline='alphabetic';
-    ctx.globalCompositeOperation = 'difference';
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `500 ${Math.round(w*0.06)}px ui-monospace, monospace`; ctx.fillText(`${fmtHM(workedMinutes)}`, 0, +w*0.005);
-    ctx.font = `${Math.round(w*0.026)}px ui-monospace, monospace`;
-    if (remaining>0){ ctx.fillText(`${fmtHM(remaining)} TO GOAL`, 0, +w*0.055); }
-    else { ctx.fillText(`GOAL REACHED`, 0, +w*0.055); }
-    if (running){
-      ctx.font = `500 ${Math.round(w*0.03)}px ui-monospace, monospace`;
-      ctx.fillText(`SESSION ${fmtHMS(liveMs)}`, 0, +w*0.11);
+    const largeSize = DIAL_SIZE * 0.06;
+    const smallSize = DIAL_SIZE * 0.026;
+    const sessionSize = DIAL_SIZE * 0.03;
+
+    workedTextSvg.textContent = fmtHM(workedMinutes);
+    workedTextSvg.setAttribute('font-size', largeSize);
+    workedTextSvg.setAttribute('font-weight', '500');
+
+    if (remaining > 0){
+      goalTextSvg.textContent = `${fmtHM(remaining)} TO GOAL`;
+    } else {
+      goalTextSvg.textContent = 'GOAL REACHED';
     }
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.restore();
+    goalTextSvg.setAttribute('font-size', smallSize);
+    goalTextSvg.setAttribute('font-weight', '400');
+
+    if (running){
+      sessionTextSvg.textContent = `SESSION ${fmtHMS(liveMs)}`;
+      sessionTextSvg.setAttribute('font-size', sessionSize);
+      sessionTextSvg.setAttribute('font-weight', '500');
+      sessionTextSvg.style.display = '';
+    } else {
+      sessionTextSvg.style.display = 'none';
+    }
 
     // UI labels + panels
     goalText.textContent = fmtHM(state.goalMinutes);
@@ -860,7 +1295,9 @@ scheduleMidnightSave();
       if (!tag) continue;
       mapWork.set(tag, (mapWork.get(tag)||0) + s);
     }
-    renderTagList(tagsWorkUL, mapWork);
+    const accentValue = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || DEFAULT_ACCENT;
+    const accentMeta = resolveAccentMeta(accentValue);
+    renderTagList(tagsWorkUL, mapWork, accentMeta, true);
 
     // Break tags (using realigned logs)
     const mapBreak = new Map();
@@ -871,78 +1308,91 @@ scheduleMidnightSave();
       const s = Math.max(0, b - a);
       if (s>0) mapBreak.set(br.tag, (mapBreak.get(br.tag)||0) + s);
     }
-    renderTagList(tagsBreakUL, mapBreak);
+    renderTagList(tagsBreakUL, mapBreak, accentMeta, false);
   }
 
-  function renderTagList(ul, map){
-  const items = Array.from(map.entries())
-    .map(([tag, secs])=>({ tag, mins: secs/60000 }))
-    .sort((a,b)=> b.mins - a.mins);
+  function renderTagList(ul, map, accentMeta, colorize=false){
+    const items = Array.from(map.entries())
+      .map(([tag, secs])=>({ tag, mins: secs/60000 }))
+      .sort((a,b)=> b.mins - a.mins);
 
-  if (!items.length){
-    ul.innerHTML = `<li><span class="label">—</span><span class="time">0h 0m</span></li>`;
-    return;
+    if (!items.length){
+      ul.innerHTML = `<li><span class="label">—</span><span class="time">0h 0m</span></li>`;
+      return;
+    }
+
+    ul.innerHTML = items.map(it => {
+      const safeTag = escapeHtml(it.tag);
+      const encodedTag = encodeURIComponent(it.tag);
+      const color = colorize ? colorForTag(it.tag, it.tag, accentMeta) : null;
+      const swatch = colorize
+        ? `<button type="button" class="tag-swatch" data-tag="${encodedTag}" aria-label="Choose color for ${safeTag}" style="background:${color}"></button>`
+        : '';
+      return `<li>${swatch}<span class="label" data-tag="${encodedTag}" title="Click to rename">${safeTag}</span><span class="time">${fmtHM(it.mins)}</span></li>`;
+    }).join('');
   }
 
-  ul.innerHTML = items.map(it => (
-    `<li>
-       <span class="label" data-tag="${escapeHtml(it.tag)}" title="Click to rename">${escapeHtml(it.tag)}</span>
-       <span class="time">${fmtHM(it.mins)}</span>
-     </li>`
-  )).join('');
-}
+  function renameWorkTag(oldTag, newTag){
+    const { start: dayStart, end } = todayBounds(new Date());
+    let changed = false;
 
-function renameWorkTag(oldTag, newTag){
-  const { start: dayStart, end } = todayBounds(new Date());
-  let changed = false;
-
-  for (const sess of state.sessions){
-    const sInToday = (sess.end ?? Date.now()) > dayStart && sess.start < end;
-    if (!sInToday) continue;
-    if ((sess.tag || '').trim() === oldTag){
-      if (newTag) {
-        sess.tag = newTag;
-      } else {
-        // clear → default Session N naming will be re-applied
-        sess.tag = undefined;
+    for (const sess of state.sessions){
+      const sInToday = (sess.end ?? Date.now()) > dayStart && sess.start < end;
+      if (!sInToday) continue;
+      if ((sess.tag || '').trim() === oldTag){
+        if (newTag) {
+          sess.tag = newTag;
+        } else {
+          // clear → default Session N naming will be re-applied
+          sess.tag = undefined;
+        }
+        changed = true;
       }
-      changed = true;
+    }
+    if (changed){
+      const oldKey = normalizeTagKey(oldTag);
+      const newKey = normalizeTagKey(newTag);
+      if (!state.tagColors) state.tagColors = {};
+      if (oldKey && state.tagColors[oldKey]){
+        const preserved = state.tagColors[oldKey];
+        delete state.tagColors[oldKey];
+        if (newKey) state.tagColors[newKey] = preserved;
+      }
+      if (!newTag) assignDefaultSessionNamesForToday();
+      tagColorCache.clear();
+      closeColorPicker();
+      saveState();
+      updateTagsPanel();
+      requestDraw();
     }
   }
-  if (changed){
-    if (!newTag) assignDefaultSessionNamesForToday();
-    saveState();
-    updateTagsPanel();
-    requestDraw();
-  }
-}
 
-function renameBreakTag(oldTag, newTag){
-  const { start: dayStart, end } = todayBounds(new Date());
-  let changed = false;
+  function renameBreakTag(oldTag, newTag){
+    const { start: dayStart, end } = todayBounds(new Date());
+    let changed = false;
 
-  for (let i = state.breakLogs.length - 1; i >= 0; i--){
-    const b = state.breakLogs[i];
-    const inToday = (b.tagTs != null ? (b.tagTs >= dayStart && b.tagTs < end)
-                                     : (b.start >= dayStart && b.start < end));
-    if (!inToday) continue;
+    for (let i = state.breakLogs.length - 1; i >= 0; i--){
+      const b = state.breakLogs[i];
+      const inToday = (b.tagTs != null ? (b.tagTs >= dayStart && b.tagTs < end)
+                                       : (b.start >= dayStart && b.start < end));
+      if (!inToday) continue;
 
-    if ((b.tag || '').trim() === oldTag){
-      if (newTag) {
-        b.tag = newTag;
-      } else {
-        // empty → remove the tagged break entry
-        state.breakLogs.splice(i,1);
+      if ((b.tag || '').trim() === oldTag){
+        if (newTag) {
+          b.tag = newTag;
+        } else {
+          // empty → remove the tagged break entry
+          state.breakLogs.splice(i,1);
+        }
+        changed = true;
       }
-      changed = true;
+    }
+    if (changed){
+      saveState();
+      updateTagsPanel();
+      requestDraw();
     }
   }
-  if (changed){
-    saveState();
-    updateTagsPanel();
-    requestDraw();
-  }
-}
 
 
   // ---------- TODOs ----------
@@ -1037,9 +1487,21 @@ if (todosUL) {
 
 if (tagsWorkUL) {
   tagsWorkUL.addEventListener('click', (e)=>{
+    const swatch = e.target.closest('.tag-swatch[data-tag]');
+    if (swatch){
+      const encoded = swatch.getAttribute('data-tag') || '';
+      const tag = decodeTagIdentifier(encoded);
+      if (tag){
+        openColorPicker(tag, swatch);
+        e.stopPropagation();
+        e.preventDefault();
+      }
+      return;
+    }
     const lbl = e.target.closest('.label[data-tag]');
     if (!lbl) return;
-    const oldTag = lbl.getAttribute('data-tag') || '';
+    const encoded = lbl.getAttribute('data-tag') || '';
+    const oldTag = decodeTagIdentifier(encoded);
     const input = prompt('Rename work tag:', oldTag);
     if (input === null) return; // cancelled
     const newTag = input.trim();
@@ -1051,7 +1513,8 @@ if (tagsBreakUL) {
   tagsBreakUL.addEventListener('click', (e)=>{
     const lbl = e.target.closest('.label[data-tag]');
     if (!lbl) return;
-    const oldTag = lbl.getAttribute('data-tag') || '';
+    const encoded = lbl.getAttribute('data-tag') || '';
+    const oldTag = decodeTagIdentifier(encoded);
     const input = prompt('Rename break tag:', oldTag);
     if (input === null) return; // cancelled
     const newTag = input.trim();
@@ -1079,4 +1542,3 @@ function setFaviconMode(running){
   // ---------- Helpers ----------
   function escapeHtml(s){ return s ? s.replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])) : s; }
 })();
-
