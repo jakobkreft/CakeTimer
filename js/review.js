@@ -691,15 +691,17 @@
     const nowDate = new Date(now);
 
     // Build 53 weeks of data (covers ~1 year, aligning to weeks)
-    // End on the current day, start 52 weeks back on a Sunday
+    // End on the current day, start 52 weeks back on a Monday
     const todayDayOfWeek = nowDate.getDay(); // 0 = Sunday
+    // Convert to Monday-based: Mon=0, Tue=1, ..., Sun=6
+    const mondayBasedDay = (todayDayOfWeek + 6) % 7;
     const endDayStart = startOfDayMs(now);
 
-    // Go back to find the Sunday that starts 52 weeks ago
+    // Go back to find the Monday that starts 52 weeks ago
     const weeksBack = 52;
-    const startSunday = new Date(endDayStart);
-    startSunday.setDate(startSunday.getDate() - (weeksBack * 7) - todayDayOfWeek);
-    const startMs = startSunday.getTime();
+    const startMonday = new Date(endDayStart);
+    startMonday.setDate(startMonday.getDate() - (weeksBack * 7) - mondayBasedDay);
+    const startMs = startMonday.getTime();
 
     // Build a map of dayStart -> workMs from existing data
     const workByDay = new Map();
