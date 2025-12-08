@@ -188,17 +188,21 @@
   const breakStatsRoot = document.getElementById('breakStats');
   const rangeLabelEl = document.getElementById('rangeLabel');
   const emptyState = document.getElementById('reviewEmptyState');
+  const activitySection = document.getElementById('activitySection');
+  const activitySummary = document.getElementById('activitySummary');
+  const activityMonthLabels = document.getElementById('activityMonthLabels');
+  const activityGrid = document.getElementById('activityGrid');
   const infoPanel = document.getElementById('infoPanel');
   const infoCloseBtn = infoPanel ? infoPanel.querySelector('.info-panel__close') : null;
   const infoTriggers = Array.from(document.querySelectorAll('[data-info-trigger]'));
   let infoReturnFocus = null;
   let savedBodyOverflow = null;
 
-  function setInfoExpanded(expanded){
+  function setInfoExpanded(expanded) {
     infoTriggers.forEach(btn => btn.setAttribute('aria-expanded', expanded ? 'true' : 'false'));
   }
 
-  function openInfo(trigger){
+  function openInfo(trigger) {
     if (!infoPanel || !infoPanel.hidden) return;
     infoReturnFocus = trigger || null;
     infoPanel.hidden = false;
@@ -208,7 +212,7 @@
     infoPanel.focus({ preventScroll: true });
   }
 
-  function closeInfo(){
+  function closeInfo() {
     if (!infoPanel || infoPanel.hidden) return;
     infoPanel.hidden = true;
     setInfoExpanded(false);
@@ -218,18 +222,18 @@
     infoReturnFocus = null;
   }
 
-  if (infoPanel){
+  if (infoPanel) {
     infoPanel.setAttribute('tabindex', '-1');
-    infoPanel.addEventListener('click', (e)=>{ if (e.target === infoPanel) closeInfo(); });
+    infoPanel.addEventListener('click', (e) => { if (e.target === infoPanel) closeInfo(); });
   }
   if (infoCloseBtn) infoCloseBtn.addEventListener('click', closeInfo);
-  infoTriggers.forEach(btn => btn.addEventListener('click', ()=> {
+  infoTriggers.forEach(btn => btn.addEventListener('click', () => {
     if (!infoPanel) return;
     if (infoPanel.hidden) openInfo(btn);
     else closeInfo();
   }));
-  document.addEventListener('keydown', (e)=>{
-    if (e.key === 'Escape' && infoPanel && !infoPanel.hidden){
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && infoPanel && !infoPanel.hidden) {
       e.preventDefault();
       closeInfo();
     }
@@ -257,6 +261,7 @@
   }
 
   renderOverview(data);
+  renderActivityGraph(data);
   renderDailyTimeline(data);
   renderWeekly(data);
   renderMonthly(data);
@@ -268,6 +273,7 @@
     if (timelineSection) timelineSection.hidden = true;
     if (weeklySection) weeklySection.hidden = true;
     if (monthlySection) monthlySection.hidden = true;
+    if (activitySection) activitySection.hidden = true;
     if (tagSection) tagSection.hidden = true;
     if (breakSection) breakSection.hidden = true;
     if (emptyState) emptyState.hidden = false;
@@ -675,6 +681,142 @@
     });
   }
 
+  function renderActivityGraph(data) {
+    if (!activitySection || !activityGrid || !activityMonthLabels) return;
+    activitySection.hidden = false;
+    activityGrid.innerHTML = '';
+    activityMonthLabels.innerHTML = '';
+
+    const now = Date.now();
+    const nowDate = new Date(now);
+
+    // Build 53 weeks of data (covers ~1 year, aligning to weeks)
+    // End on the current day, start 52 weeks back on a Sunday
+    const todayDayOfWeek = nowDate.getDay(); // 0 = Sunday
+    const endDayStart = startOfDayMs(now);
+
+    // Go back to find the Sunday that starts 52 weeks ago
+    const weeksBack = 52;
+    const startSunday = new Date(endDayStart);
+    startSunday.setDate(startSunday.getDate() - (weeksBack * 7) - todayDayOfWeek);
+    const startMs = startSunday.getTime();
+
+    // Build a map of dayStart -> workMs from existing data
+    const workByDay = new Map();
+    data.dailyData.forEach((day) => {
+      workByDay.set(day.dayStart, day.workMs);
+    });
+
+    // Thresholds for intensity levels (in minutes)
+    // Level 0: 0 (no work)
+    // Level 1: 1-60 min
+    // Level 2: 61-120 min
+    // Level 3: 121-240 min
+    // Level 4: 240+ min
+    const thresholds = [0, 1, 60, 120, 240]; // in minutes
+
+    function getLevel(workMs) {
+      const mins = workMs / msPerMinute;
+      if (mins <= 0) return 0;
+      if (mins < 60) return 1;
+      if (mins < 120) return 2;
+      if (mins < 240) return 3;
+      return 4;
+    }
+
+    // Build week columns
+    const columns = [];
+    let currentDay = startMs;
+    let workingDays = 0;
+
+    while (currentDay <= endDayStart) {
+      const weekColumn = [];
+      const weekStartMs = currentDay;
+
+      for (let dayOfWeek = 0; dayOfWeek < 7; dayOfWeek++) {
+        if (currentDay > endDayStart) {
+          // Future day placeholder (shouldn't render)
+          weekColumn.push(null);
+        } else {
+          const workMs = workByDay.get(currentDay) || 0;
+          if (workMs > 0) workingDays++;
+          const level = getLevel(workMs);
+          const date = new Date(currentDay);
+          weekColumn.push({
+            date,
+            dayStart: currentDay,
+            workMs,
+            level,
+            tooltip: `${date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}: ${formatDuration(workMs)}`
+          });
+        }
+        currentDay += msPerDay;
+      }
+
+      columns.push({ weekStartMs, days: weekColumn });
+    }
+
+    // Update summary text
+    if (activitySummary) {
+      activitySummary.textContent = `${workingDays} working ${plural(workingDays, 'day')} in the last year`;
+    }
+
+    // Render month labels
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    let lastMonth = -1;
+    const columnWidth = 15; // 12px cell + 3px gap
+
+    columns.forEach((col, colIndex) => {
+      const firstDay = col.days.find(d => d !== null);
+      if (!firstDay) return;
+
+      const month = firstDay.date.getMonth();
+      if (month !== lastMonth) {
+        const label = document.createElement('span');
+        label.className = 'activity-month-label';
+        label.textContent = monthNames[month];
+        // Position based on column index
+        label.style.marginLeft = colIndex === 0 ? '0' : '0';
+
+        // Calculate width until next month or end
+        let colspan = 1;
+        for (let i = colIndex + 1; i < columns.length; i++) {
+          const nextFirst = columns[i].days.find(d => d !== null);
+          if (nextFirst && nextFirst.date.getMonth() !== month) break;
+          colspan++;
+        }
+        label.style.width = `${colspan * columnWidth}px`;
+
+        activityMonthLabels.appendChild(label);
+        lastMonth = month;
+      }
+    });
+
+    // Render grid columns
+    columns.forEach((col) => {
+      const colEl = document.createElement('div');
+      colEl.className = 'activity-column';
+
+      col.days.forEach((day) => {
+        const cell = document.createElement('div');
+        cell.className = 'activity-cell';
+
+        if (day === null) {
+          // Empty cell for future dates
+          cell.classList.add('activity-cell--empty');
+          cell.style.visibility = 'hidden';
+        } else {
+          cell.classList.add(`activity-cell--level-${day.level}`);
+          cell.title = day.tooltip;
+        }
+
+        colEl.appendChild(cell);
+      });
+
+      activityGrid.appendChild(colEl);
+    });
+  }
+
   function renderDailyTimeline(data) {
     if (!timelineSection || !dailyList) return;
     dailyList.innerHTML = '';
@@ -826,11 +968,11 @@
     labelSpan.textContent = label;
     const valueSpan = document.createElement('span');
     valueSpan.className = 'value';
-    if (valueClass){
+    if (valueClass) {
       const classes = Array.isArray(valueClass)
         ? valueClass
         : String(valueClass).trim().split(/\s+/);
-      classes.filter(Boolean).forEach((cls)=> valueSpan.classList.add(cls));
+      classes.filter(Boolean).forEach((cls) => valueSpan.classList.add(cls));
     }
     valueSpan.textContent = value;
     row.appendChild(labelSpan);
