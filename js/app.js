@@ -210,6 +210,7 @@
 
   // ---------- Storage ----------
   const STORE_KEY = 'ot.v3.state';
+  const SORT_ORDER = ['time-desc', 'time-asc', 'recent-desc', 'recent-asc'];
 
   function defaultState() {
     return {
@@ -221,7 +222,9 @@
       streak: { current: 0, best: 0, lastDay: null },
       badges: [],
       tagColors: {},
-      todos: []                    // [{id,text,done,created,completedAt?}]
+      todos: [],
+      tagSortWork: 'time-desc',
+      tagSortBreak: 'time-desc'
     };
   }
 
@@ -247,6 +250,8 @@
         }
       }
       base.todos = Array.isArray(s.todos) ? s.todos : [];
+      if (SORT_ORDER.includes(s.tagSortWork)) base.tagSortWork = s.tagSortWork;
+      if (SORT_ORDER.includes(s.tagSortBreak)) base.tagSortBreak = s.tagSortBreak;
       base.version = 4;
     } catch { }
     return base;
@@ -336,10 +341,10 @@
   const tagSortBreakEl = document.getElementById('tagSortBreak');
 
   // Tag sort modes: 'time-desc', 'time-asc', 'recent-desc', 'recent-asc'
-  let tagSortWork = 'time-desc';
-  let tagSortBreak = 'time-desc';
   const SORT_LABELS = { 'time-desc': '↓TIME', 'time-asc': '↑TIME', 'recent-desc': '↓RECENT', 'recent-asc': '↑RECENT' };
-  const SORT_ORDER = ['time-desc', 'time-asc', 'recent-desc', 'recent-asc'];
+  // Initialize UI labels from persisted state
+  if (tagSortWorkEl) tagSortWorkEl.textContent = SORT_LABELS[state.tagSortWork] || '↓TIME';
+  if (tagSortBreakEl) tagSortBreakEl.textContent = SORT_LABELS[state.tagSortBreak] || '↓TIME';
 
   const addTodoBtn = document.getElementById('addTodo');
   const todosUL = document.getElementById('todosList');
@@ -530,11 +535,25 @@
       state.streak.best = Math.max(state.streak.best || 0, state.streak.current);
       state.streak.lastDay = today;
       saveState();
-      welcomeEl.hidden = false;
-      setTimeout(() => { welcomeEl.hidden = true; }, 3000);
     }
     updateStreakUI();
   })();
+
+  // ---------- Welcome prompt (shown until work starts today) ----------
+  function updateWelcome() {
+    const { start: dayStart } = todayBounds(new Date());
+    const segs = segmentsForDay(dayStart, Date.now(), state.sessions);
+    const hasWorkToday = segs.length > 0;
+    if (hasWorkToday) {
+      welcomeEl.hidden = true;
+      return;
+    }
+    // Check for any past-day history
+    const hasPastHistory = state.sessions.some(s => (s.end ?? Date.now()) < dayStart);
+    welcomeEl.textContent = hasPastHistory ? 'WELCOME BACK!' : 'WELCOME!';
+    welcomeEl.hidden = false;
+  }
+  updateWelcome();
 
   function updateStreakUI() {
     streakLine.textContent = `STREAK: ${state.streak.current || 0} • BEST: ${state.streak.best || 0}`;
@@ -550,7 +569,7 @@
     realignBreakLogsForToday();
     saveState();
     setFaviconMode(true);
-    announce('Started'); requestDraw(); updateTagsPanel();
+    announce('Started'); requestDraw(); updateTagsPanel(); updateWelcome();
   }
 
   function stopSession() {
@@ -565,7 +584,7 @@
     realignBreakLogsForToday();
     saveState();
     setFaviconMode(false);
-    announce('Stopped'); requestDraw(); updateTagsPanel();
+    announce('Stopped'); requestDraw(); updateTagsPanel(); updateWelcome();
   }
 
   function clearToday() {
@@ -583,7 +602,7 @@
     state.sessions = next;
     state.breakLogs = state.breakLogs.filter(b => b.end <= start || b.start >= end);
     removeAllBadgesForDay(ymd(new Date(start)));
-    saveState(); announce('Cleared today'); requestDraw(); updateTagsPanel();
+    saveState(); announce('Cleared today'); requestDraw(); updateTagsPanel(); updateWelcome();
   }
 
   function setGoal(mins) { state.goalMinutes = clamp(Math.round(mins), 0, 24 * 60); saveState(); requestDraw(); }
@@ -1312,7 +1331,7 @@
     }
     const accentValue = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || DEFAULT_ACCENT;
     const accentMeta = resolveAccentMeta(accentValue);
-    renderTagList(tagsWorkUL, workData, accentMeta, true, tagSortWork);
+    renderTagList(tagsWorkUL, workData, accentMeta, true, state.tagSortWork);
 
     // Break tags: collect duration and lastUsed per tag
     const breakData = new Map(); // tag -> { ms, lastUsed }
@@ -1331,7 +1350,7 @@
         }
       }
     }
-    renderTagList(tagsBreakUL, breakData, accentMeta, false, tagSortBreak);
+    renderTagList(tagsBreakUL, breakData, accentMeta, false, state.tagSortBreak);
   }
 
   function renderTagList(ul, dataMap, accentMeta, colorize = false, sortMode = 'time-desc') {
@@ -1553,17 +1572,19 @@
   // Sort toggle handlers
   if (tagSortWorkEl) {
     tagSortWorkEl.addEventListener('click', () => {
-      const idx = SORT_ORDER.indexOf(tagSortWork);
-      tagSortWork = SORT_ORDER[(idx + 1) % SORT_ORDER.length];
-      tagSortWorkEl.textContent = SORT_LABELS[tagSortWork];
+      const idx = SORT_ORDER.indexOf(state.tagSortWork);
+      state.tagSortWork = SORT_ORDER[(idx + 1) % SORT_ORDER.length];
+      tagSortWorkEl.textContent = SORT_LABELS[state.tagSortWork];
+      saveState();
       updateTagsPanel();
     });
   }
   if (tagSortBreakEl) {
     tagSortBreakEl.addEventListener('click', () => {
-      const idx = SORT_ORDER.indexOf(tagSortBreak);
-      tagSortBreak = SORT_ORDER[(idx + 1) % SORT_ORDER.length];
-      tagSortBreakEl.textContent = SORT_LABELS[tagSortBreak];
+      const idx = SORT_ORDER.indexOf(state.tagSortBreak);
+      state.tagSortBreak = SORT_ORDER[(idx + 1) % SORT_ORDER.length];
+      tagSortBreakEl.textContent = SORT_LABELS[state.tagSortBreak];
+      saveState();
       updateTagsPanel();
     });
   }

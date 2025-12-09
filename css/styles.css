@@ -231,6 +231,10 @@ body {
   margin-bottom: 6px;
 }
 
+.welcome[hidden] {
+  display: none;
+}
+
 .badges-row {
   display: flex;
   flex-wrap: wrap;
