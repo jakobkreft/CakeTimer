@@ -1591,7 +1591,7 @@
 
   // --- Favicon swapper ---
   function setFaviconMode(running) {
-    const href = running ? 'favicon1.ico' : 'favicon0.ico';
+    const href = running ? 'assets/favicon1.ico' : 'assets/favicon0.ico';
     const head = document.head;
 
     // Remove existing icon links so browsers reliably refresh the favicon

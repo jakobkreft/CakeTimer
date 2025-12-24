@@ -5,6 +5,14 @@
 A minimalist 24-hour “cake” timer for deep work.  
 Track sessions, tag slices, review your week, and keep todos. Best part, it's all stored locally in your browser.
 
+## Screenshots
+
+Main timer (index page):
+![Main timer screenshot](assets/cake.png)
+
+Weekly review (review page):
+![Weekly review screenshot](assets/review.png)
+
 
 
 ---
