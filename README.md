@@ -25,3 +25,7 @@ python -m http.server 8080
 # Then open:
 http://localhost:8080
 ```
+
+
+I started this project during covid lockdown. [Here is the old website.](https://onlinetimer.github.io/)
+
