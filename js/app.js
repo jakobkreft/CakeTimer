@@ -41,6 +41,7 @@
     const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     return { start, end: start + msPerDay };
   };
+  const effectiveEnd = (session, nowMs = Date.now()) => (session.end == null ? nowMs : session.end);
 
   // ---------- Color utilities ----------
   const tagColorCache = new Map();
@@ -542,14 +543,15 @@
   // ---------- Welcome prompt (shown until work starts today) ----------
   function updateWelcome() {
     const { start: dayStart } = todayBounds(new Date());
-    const segs = segmentsForDay(dayStart, Date.now(), state.sessions);
+    const nowMs = Date.now();
+    const segs = segmentsForDay(dayStart, nowMs, state.sessions);
     const hasWorkToday = segs.length > 0;
     if (hasWorkToday) {
       welcomeEl.hidden = true;
       return;
     }
     // Check for any past-day history
-    const hasPastHistory = state.sessions.some(s => (s.end ?? Date.now()) < dayStart);
+    const hasPastHistory = state.sessions.some(s => effectiveEnd(s, nowMs) < dayStart);
     welcomeEl.textContent = hasPastHistory ? 'WELCOME BACK!' : 'WELCOME!';
     welcomeEl.hidden = false;
   }
@@ -589,10 +591,11 @@
 
   function clearToday() {
     const { start, end } = todayBounds(new Date());
+    const nowMs = Date.now();
     if (isRunning()) stopSession();
     const next = [];
     for (const sess of state.sessions) {
-      const s = sess.start, e = sess.end ?? Date.now();
+      const s = sess.start, e = effectiveEnd(sess, nowMs);
       if (e <= start || s >= end) next.push(sess);
       else {
         if (s < start) next.push({ start: s, end: start, tag: sess.tag });
@@ -660,7 +663,7 @@
   function timeFromAngle(theta, dayStart) { const seconds = theta / tau2 * 86400; return dayStart + Math.round(seconds) * 1000; }
 
   // ---------- Preview sessions while dragging ----------
-  let drag = null; // { segIndex, edge, dayStart, sessionIndex, origStart, origEnd, curStart, curEnd }
+  let drag = null; // { segIndex, edge, dayStart, sessionIndex, isRunning, origStart, origEnd, curStart, curEnd }
   function getSessionsForCalc() {
     if (!drag) return state.sessions;
     const arr = state.sessions.slice();
@@ -673,7 +676,7 @@
     const dayEnd = dayStart + msPerDay;
     const segs = [];
     sessions.forEach((sess, i) => {
-      const s = sess.start, e = (sess.end == null) ? nowMs : sess.end;
+      const s = sess.start, e = effectiveEnd(sess, nowMs);
       if (e <= dayStart || s >= dayEnd) return;
       const a = Math.max(s, dayStart), b = Math.min(e, dayEnd);
       if (b > a) segs.push({ startMs: a, endMs: b, sessionIndex: i, tag: sess.tag || null });
@@ -699,9 +702,10 @@
   // ---------- Default session names (today) ----------
   function assignDefaultSessionNamesForToday() {
     const { start: dayStart } = todayBounds(new Date());
+    const nowMs = Date.now();
     const todaySessions = state.sessions
       .map((s, i) => ({ s, i }))
-      .filter(x => (x.s.end ?? Date.now()) > dayStart && x.s.start < dayStart + msPerDay)
+      .filter(x => effectiveEnd(x.s, nowMs) > dayStart && x.s.start < dayStart + msPerDay)
       .sort((a, b) => (Math.max(a.s.start, dayStart) - Math.max(b.s.start, dayStart)));
 
     const re = /^Session\s+(\d+)\b/i;
@@ -754,7 +758,7 @@
     const dayEnd = dayStart + msPerDay;
     let total = 0; const nowMs = Date.now();
     for (const sess of state.sessions) {
-      const s = sess.start, e = sess.end == null ? nowMs : sess.end;
+      const s = sess.start, e = effectiveEnd(sess, nowMs);
       const a = Math.max(s, dayStart), b = Math.min(e, dayEnd);
       if (b > a) total += (b - a) / 1000;
     }
@@ -786,6 +790,10 @@
         if (Math.min(ds, de) < threshold) nearEdge = (ds < de) ? 'start' : 'end';
         break;
       }
+    }
+    if (segIndex >= 0 && nearEdge === 'end') {
+      const sess = state.sessions[segs[segIndex].sessionIndex];
+      if (sess && sess.end == null) nearEdge = null;
     }
     hover = { segIndex, theta, nearEdge };
     updateCursor();
@@ -822,7 +830,7 @@
     const dayEnd = dayStart + msPerDay;
     const sess = state.sessions[sessionIndex]; if (!sess) return;
     const nowMs = Date.now();
-    const s = sess.start, e = sess.end == null ? nowMs : sess.end;
+    const s = sess.start, e = effectiveEnd(sess, nowMs);
     if (e <= dayStart || s >= dayEnd) return;
     if (s >= dayStart && e <= dayEnd) { state.sessions.splice(sessionIndex, 1); return; }
     if (s < dayStart && e <= dayEnd) { sess.end = dayStart; return; }
@@ -833,12 +841,12 @@
   function updateDragPreview(thetaNew) {
     const desired = timeFromAngle(thetaNew, drag.dayStart);
     const capped = cappedEdgeTime(drag.segIndex, drag.edge, desired, drag.dayStart);
+    const nowMs = Date.now();
     if (drag.edge === 'start') {
-      const maxStart = (drag.curEnd ?? Date.now()) - DRAG_MIN_MS;
+      const maxStart = (drag.curEnd ?? nowMs) - DRAG_MIN_MS;
       drag.curStart = clamp(capped, drag.dayStart, maxStart);
     } else {
       const minEnd = (drag.curStart + DRAG_MIN_MS);
-      const nowMs = Date.now();
       const dayEnd = drag.dayStart + msPerDay;
       drag.curEnd = clamp(capped, minEnd, Math.min(dayEnd, nowMs));
     }
@@ -920,18 +928,29 @@
       if (Math.hypot(dx, dy) >= DRAG_PX) {
         const seg = res.segs[dragCandidate.segIndex];
         const sessIdx = seg.sessionIndex;
-        drag = {
-          segIndex: dragCandidate.segIndex,
-          edge: dragCandidate.edge,
-          dayStart: res.dayStart,
-          sessionIndex: sessIdx,
-          origStart: state.sessions[sessIdx].start,
-          origEnd: state.sessions[sessIdx].end,
-          curStart: state.sessions[sessIdx].start,
-          curEnd: state.sessions[sessIdx].end ?? Date.now(),
-        };
-        dial.setPointerCapture(e.pointerId);
-        clickPending = false;
+        const session = state.sessions[sessIdx];
+        if (!session) {
+          dragCandidate = null;
+        } else {
+          const isRunning = session.end == null;
+          if (isRunning && dragCandidate.edge === 'end') {
+            dragCandidate = null;
+          } else {
+            drag = {
+              segIndex: dragCandidate.segIndex,
+              edge: dragCandidate.edge,
+              dayStart: res.dayStart,
+              sessionIndex: sessIdx,
+              isRunning,
+              origStart: session.start,
+              origEnd: session.end,
+              curStart: session.start,
+              curEnd: isRunning ? null : session.end,
+            };
+            dial.setPointerCapture(e.pointerId);
+            clickPending = false;
+          }
+        }
       }
     }
     if (drag) {
@@ -962,7 +981,7 @@
         saveState();
       } else {
         state.sessions[drag.sessionIndex].start = drag.curStart;
-        state.sessions[drag.sessionIndex].end = drag.curEnd;
+        state.sessions[drag.sessionIndex].end = drag.isRunning ? null : drag.curEnd;
         saveState();
       }
       assignDefaultSessionNamesForToday();
@@ -1315,12 +1334,12 @@
     const workData = new Map(); // tag -> { ms, lastUsed }
     for (const sess of state.sessions) {
       const a = Math.max(sess.start, dayStart);
-      const b = Math.min(sess.end ?? nowMs, dayEnd);
+      const endTime = effectiveEnd(sess, nowMs);
+      const b = Math.min(endTime, dayEnd);
       const s = Math.max(0, b - a);
       if (s <= 0) continue;
       const tag = (sess.tag && sess.tag.trim()) ? sess.tag : null;
       if (!tag) continue;
-      const endTime = sess.end ?? nowMs;
       const existing = workData.get(tag);
       if (existing) {
         existing.ms += s;
@@ -1381,10 +1400,11 @@
 
   function renameWorkTag(oldTag, newTag) {
     const { start: dayStart, end } = todayBounds(new Date());
+    const nowMs = Date.now();
     let changed = false;
 
     for (const sess of state.sessions) {
-      const sInToday = (sess.end ?? Date.now()) > dayStart && sess.start < end;
+      const sInToday = effectiveEnd(sess, nowMs) > dayStart && sess.start < end;
       if (!sInToday) continue;
       if ((sess.tag || '').trim() === oldTag) {
         if (newTag) {
