@@ -42,6 +42,7 @@
     return { start, end: start + msPerDay };
   };
   const effectiveEnd = (session, nowMs = Date.now()) => (session.end == null ? nowMs : session.end);
+  const clientId = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
   // ---------- Color utilities ----------
   const DEFAULT_ACCENT = TagColor.DEFAULT_ACCENT;
@@ -89,6 +90,12 @@
   const STORE_KEY = 'ot.v3.state';
   const SORT_ORDER = ['time-desc', 'time-asc', 'recent-desc', 'recent-asc'];
 
+  function normalizeMeta(meta) {
+    const updatedAt = typeof meta?.updatedAt === 'number' ? meta.updatedAt : 0;
+    const savedClientId = typeof meta?.clientId === 'string' ? meta.clientId : clientId;
+    return { updatedAt, clientId: savedClientId };
+  }
+
   function defaultState() {
     return {
       version: 4,
@@ -101,43 +108,68 @@
       tagColors: {},
       todos: [],
       ignoredDays: [],
+      meta: normalizeMeta(),
       tagSortWork: 'time-desc',
       tagSortBreak: 'time-desc'
     };
   }
 
-  function loadState() {
+  function hydrateState(raw) {
     let base = defaultState();
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (!raw) return base;
-      const s = JSON.parse(raw);
-      base.sessions = Array.isArray(s.sessions) ? s.sessions : [];
-      base.goalMinutes = typeof s.goalMinutes === 'number' ? s.goalMinutes : base.goalMinutes;
-      base.theme = (s.theme === 'dark' ? 'dark' : 'light');
-      base.breakLogs = Array.isArray(s.breakLogs) ? s.breakLogs : [];
-      for (const b of base.breakLogs) { if (typeof b.tagTs !== 'number') b.tagTs = Math.round((b.start + b.end) / 2); }
-      base.streak = s.streak && typeof s.streak === 'object' ? s.streak : base.streak;
-      base.badges = Array.isArray(s.badges) ? s.badges : [];
-      if (s.tagColors && typeof s.tagColors === 'object') {
-        base.tagColors = {};
-        for (const [k, v] of Object.entries(s.tagColors)) {
-          if (typeof v !== 'string' || !v) continue;
-          const nk = normalizeTagKey(k);
-          if (nk) base.tagColors[nk] = v;
-        }
+    if (!raw || typeof raw !== 'object') return base;
+    const s = raw;
+    base.sessions = Array.isArray(s.sessions) ? s.sessions : [];
+    base.goalMinutes = typeof s.goalMinutes === 'number' ? s.goalMinutes : base.goalMinutes;
+    base.theme = (s.theme === 'dark' ? 'dark' : 'light');
+    base.breakLogs = Array.isArray(s.breakLogs) ? s.breakLogs : [];
+    for (const b of base.breakLogs) { if (typeof b.tagTs !== 'number') b.tagTs = Math.round((b.start + b.end) / 2); }
+    base.streak = s.streak && typeof s.streak === 'object' ? s.streak : base.streak;
+    base.badges = Array.isArray(s.badges) ? s.badges : [];
+    if (s.tagColors && typeof s.tagColors === 'object') {
+      base.tagColors = {};
+      for (const [k, v] of Object.entries(s.tagColors)) {
+        if (typeof v !== 'string' || !v) continue;
+        const nk = normalizeTagKey(k);
+        if (nk) base.tagColors[nk] = v;
       }
-      base.todos = Array.isArray(s.todos) ? s.todos : [];
-      if (Array.isArray(s.ignoredDays)) {
-        base.ignoredDays = s.ignoredDays.filter(day => typeof day === 'string' && day.trim());
-      }
-      if (SORT_ORDER.includes(s.tagSortWork)) base.tagSortWork = s.tagSortWork;
-      if (SORT_ORDER.includes(s.tagSortBreak)) base.tagSortBreak = s.tagSortBreak;
-      base.version = 4;
-    } catch { }
+    }
+    base.todos = Array.isArray(s.todos) ? s.todos : [];
+    if (Array.isArray(s.ignoredDays)) {
+      base.ignoredDays = s.ignoredDays.filter(day => typeof day === 'string' && day.trim());
+    }
+    if (SORT_ORDER.includes(s.tagSortWork)) base.tagSortWork = s.tagSortWork;
+    if (SORT_ORDER.includes(s.tagSortBreak)) base.tagSortBreak = s.tagSortBreak;
+    base.meta = normalizeMeta(s.meta);
+    base.version = 4;
     return base;
   }
-  function saveState() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { } }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return defaultState();
+      const s = JSON.parse(raw);
+      return hydrateState(s);
+    } catch { }
+    return defaultState();
+  }
+  function readStoredStateFromValue(rawValue) {
+    if (!rawValue) return null;
+    try {
+      return hydrateState(JSON.parse(rawValue));
+    } catch {
+      return null;
+    }
+  }
+
+  function saveState() {
+    try {
+      state.meta = normalizeMeta(state.meta);
+      state.meta.updatedAt = Date.now();
+      state.meta.clientId = clientId;
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    } catch { }
+  }
 
   // ---------- State & elements ----------
   const state = loadState();
@@ -197,6 +229,15 @@
   dial.appendChild(hourGroup);
   dial.appendChild(textGroup);
 
+  window.addEventListener('storage', (e) => {
+    if (e.key !== STORE_KEY) return;
+    syncFromStorageValue(e.newValue);
+  });
+  window.addEventListener('focus', syncFromStorage);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncFromStorage();
+  });
+
   // Side controls
   const toggleBtn = document.getElementById('toggleBtn');
   const resetBtn = document.getElementById('resetBtn');
@@ -222,9 +263,12 @@
 
   // Tag sort modes: 'time-desc', 'time-asc', 'recent-desc', 'recent-asc'
   const SORT_LABELS = { 'time-desc': '↓TIME', 'time-asc': '↑TIME', 'recent-desc': '↓RECENT', 'recent-asc': '↑RECENT' };
+  function syncSortLabels() {
+    if (tagSortWorkEl) tagSortWorkEl.textContent = SORT_LABELS[state.tagSortWork] || '↓TIME';
+    if (tagSortBreakEl) tagSortBreakEl.textContent = SORT_LABELS[state.tagSortBreak] || '↓TIME';
+  }
   // Initialize UI labels from persisted state
-  if (tagSortWorkEl) tagSortWorkEl.textContent = SORT_LABELS[state.tagSortWork] || '↓TIME';
-  if (tagSortBreakEl) tagSortBreakEl.textContent = SORT_LABELS[state.tagSortBreak] || '↓TIME';
+  syncSortLabels();
 
   const addTodoBtn = document.getElementById('addTodo');
   const todosUL = document.getElementById('todosList');
@@ -406,6 +450,46 @@
 
   window.addEventListener('resize', closeColorPicker);
   window.addEventListener('scroll', closeColorPicker, true);
+
+  function applyState(next) {
+    if (!next) return;
+    state.version = next.version;
+    state.sessions = next.sessions;
+    state.breakLogs = next.breakLogs;
+    state.goalMinutes = next.goalMinutes;
+    state.theme = next.theme;
+    state.streak = next.streak || defaultState().streak;
+    state.badges = next.badges;
+    state.tagColors = next.tagColors || {};
+    state.todos = next.todos || [];
+    state.ignoredDays = next.ignoredDays || [];
+    state.tagSortWork = next.tagSortWork;
+    state.tagSortBreak = next.tagSortBreak;
+    state.meta = normalizeMeta(next.meta);
+    applyTheme();
+    syncSortLabels();
+    TagColor.clearCache();
+    closeColorPicker();
+    updateStreakUI();
+    updateTagsPanel();
+    updateWelcome();
+    requestDraw();
+  }
+
+  function syncFromStorageValue(rawValue) {
+    const incoming = readStoredStateFromValue(rawValue);
+    if (!incoming) return;
+    const currentUpdatedAt = state.meta?.updatedAt || 0;
+    if ((incoming.meta?.updatedAt || 0) > currentUpdatedAt) {
+      applyState(incoming);
+    }
+  }
+
+  function syncFromStorage() {
+    try {
+      syncFromStorageValue(localStorage.getItem(STORE_KEY));
+    } catch { }
+  }
 
   // ---------- First-open-of-day streak handling ----------
   (function handleDailyStreak() {

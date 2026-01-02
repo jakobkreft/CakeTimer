@@ -9,6 +9,7 @@
   const tau = Math.PI * 2;
   const DEFAULT_ACCENT = TagColor.DEFAULT_ACCENT;
   const SVG_NS = 'http://www.w3.org/2000/svg';
+  const clientId = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
   const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
   const pad = (n) => String(n).padStart(2, '0');
@@ -22,36 +23,51 @@
     theme: 'light',
     tagColors: {},
     todos: [],
-    ignoredDays: []
+    ignoredDays: [],
+    meta: { updatedAt: 0, clientId }
   };
+
+  function normalizeMeta(meta) {
+    const updatedAt = typeof meta?.updatedAt === 'number' ? meta.updatedAt : 0;
+    const savedClientId = typeof meta?.clientId === 'string' ? meta.clientId : clientId;
+    return { updatedAt, clientId: savedClientId };
+  }
+
+  function hydrateState(raw) {
+    const base = { ...defaultState };
+    if (!raw || typeof raw !== 'object') return base;
+    const parsed = raw;
+    if (Array.isArray(parsed.sessions)) base.sessions = normalizeSessions(parsed.sessions);
+    if (Array.isArray(parsed.breakLogs)) base.breakLogs = normalizeBreakLogs(parsed.breakLogs);
+    if (typeof parsed.goalMinutes === 'number' && !Number.isNaN(parsed.goalMinutes)) {
+      base.goalMinutes = parsed.goalMinutes;
+    }
+    if (typeof parsed.theme === 'string') {
+      base.theme = parsed.theme === 'dark' ? 'dark' : 'light';
+    }
+    if (parsed.tagColors && typeof parsed.tagColors === 'object') {
+      base.tagColors = {};
+      for (const [rawKey, value] of Object.entries(parsed.tagColors)) {
+        const key = normalizeTagKey(rawKey);
+        if (!key) continue;
+        if (typeof value === 'string' && value.trim()) {
+          base.tagColors[key] = value.trim();
+        }
+      }
+    }
+    if (Array.isArray(parsed.todos)) base.todos = normalizeTodos(parsed.todos);
+    if (Array.isArray(parsed.ignoredDays)) {
+      base.ignoredDays = parsed.ignoredDays.filter(day => typeof day === 'string' && day.trim());
+    }
+    base.meta = normalizeMeta(parsed.meta);
+    return base;
+  }
 
   let state = { ...defaultState };
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed.sessions)) state.sessions = normalizeSessions(parsed.sessions);
-      if (Array.isArray(parsed.breakLogs)) state.breakLogs = normalizeBreakLogs(parsed.breakLogs);
-      if (typeof parsed.goalMinutes === 'number' && !Number.isNaN(parsed.goalMinutes)) {
-        state.goalMinutes = parsed.goalMinutes;
-      }
-      if (typeof parsed.theme === 'string') {
-        state.theme = parsed.theme === 'dark' ? 'dark' : 'light';
-      }
-      if (parsed.tagColors && typeof parsed.tagColors === 'object') {
-        state.tagColors = {};
-        for (const [rawKey, value] of Object.entries(parsed.tagColors)) {
-          const key = normalizeTagKey(rawKey);
-          if (!key) continue;
-          if (typeof value === 'string' && value.trim()) {
-            state.tagColors[key] = value.trim();
-          }
-        }
-      }
-      if (Array.isArray(parsed.todos)) state.todos = normalizeTodos(parsed.todos);
-      if (Array.isArray(parsed.ignoredDays)) {
-        state.ignoredDays = parsed.ignoredDays.filter(day => typeof day === 'string' && day.trim());
-      }
+      state = hydrateState(JSON.parse(raw));
     }
   } catch (err) {
     console.error('Unable to parse saved review data', err);
@@ -59,18 +75,28 @@
 
   function saveState() {
     try {
+      state.meta = normalizeMeta(state.meta);
+      state.meta.updatedAt = Date.now();
+      state.meta.clientId = clientId;
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
     } catch (err) {
       console.warn('Unable to save review data', err);
     }
   }
+  let accentMeta = TagColor.resolveAccentMeta(DEFAULT_ACCENT);
+  let breakSwatchColor = '#9ca3af';
+  let rootStyles = getComputedStyle(document.documentElement);
 
-  document.documentElement.classList.toggle('dark', state.theme === 'dark');
+  function refreshTheme() {
+    document.documentElement.classList.toggle('dark', state.theme === 'dark');
+    rootStyles = getComputedStyle(document.documentElement);
+    const accentColor = rootStyles.getPropertyValue('--accent').trim() || DEFAULT_ACCENT;
+    breakSwatchColor = rootStyles.getPropertyValue('--muted').trim() || '#9ca3af';
+    accentMeta = TagColor.resolveAccentMeta(accentColor);
+    TagColor.clearCache();
+  }
 
-  const rootStyles = getComputedStyle(document.documentElement);
-  const accentColor = rootStyles.getPropertyValue('--accent').trim() || DEFAULT_ACCENT;
-  const breakSwatchColor = rootStyles.getPropertyValue('--muted').trim() || '#9ca3af';
-  const accentMeta = TagColor.resolveAccentMeta(accentColor);
+  refreshTheme();
 
   const summarySection = document.getElementById('summarySection');
   const timelineSection = document.getElementById('timelineSection');
@@ -226,6 +252,41 @@
 
   window.addEventListener('resize', closeDayMenu);
   window.addEventListener('scroll', closeDayMenu, true);
+
+  function readStoredStateFromValue(rawValue) {
+    if (!rawValue) return null;
+    try {
+      return hydrateState(JSON.parse(rawValue));
+    } catch {
+      return null;
+    }
+  }
+
+  function syncFromStorageValue(rawValue) {
+    const incoming = readStoredStateFromValue(rawValue);
+    if (!incoming) return;
+    const currentUpdatedAt = state.meta?.updatedAt || 0;
+    if ((incoming.meta?.updatedAt || 0) > currentUpdatedAt) {
+      state = incoming;
+      refreshTheme();
+      renderAll();
+    }
+  }
+
+  function syncFromStorage() {
+    try {
+      syncFromStorageValue(localStorage.getItem(STORE_KEY));
+    } catch { }
+  }
+
+  window.addEventListener('storage', (e) => {
+    if (e.key !== STORE_KEY) return;
+    syncFromStorageValue(e.newValue);
+  });
+  window.addEventListener('focus', syncFromStorage);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncFromStorage();
+  });
 
   renderAll();
 
