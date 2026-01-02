@@ -7,127 +7,13 @@
   const msPerHour = 60 * msPerMinute;
   const msPerDay = 24 * msPerHour;
   const tau = Math.PI * 2;
-  const DEFAULT_ACCENT = '#16a34a';
+  const DEFAULT_ACCENT = TagColor.DEFAULT_ACCENT;
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
   const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
   const pad = (n) => String(n).padStart(2, '0');
   const escapeHtml = (str) => (str == null ? '' : String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
-
-  function normalizeTagKey(tag) {
-    if (typeof tag !== 'string') return '';
-    const trimmed = tag.trim().toLowerCase();
-    return trimmed;
-  }
-
-  function resolveColorInfo(color) {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    try {
-      ctx.fillStyle = color;
-      const normalized = ctx.fillStyle;
-      if (!normalized) return null;
-      if (normalized.startsWith('#')) {
-        return hexToRgb(normalized);
-      }
-      const match = normalized.match(/rgba?\(([^)]+)\)/i);
-      if (match) {
-        const parts = match[1].split(',').map((part) => parseFloat(part.trim()));
-        if (parts.length >= 3) {
-          return { r: parts[0], g: parts[1], b: parts[2], normalized };
-        }
-      }
-    } catch (err) {
-      console.warn('Color resolution failed', err);
-    }
-    return null;
-  }
-
-  function hexToRgb(hex) {
-    let h = hex.replace('#', '');
-    if (h.length === 3) h = h.split('').map((ch) => ch + ch).join('');
-    if (h.length !== 6) return null;
-    const r = parseInt(h.slice(0, 2), 16);
-    const g = parseInt(h.slice(2, 4), 16);
-    const b = parseInt(h.slice(4, 6), 16);
-    if ([r, g, b].some((v) => Number.isNaN(v))) return null;
-    return { r, g, b, normalized: `#${h}` };
-  }
-
-  function rgbToHsl(r, g, b) {
-    r /= 255; g /= 255; b /= 255;
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    let h = 0; let s = 0;
-    const l = (max + min) / 2;
-    if (max !== min) {
-      const d = max - min;
-      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-      switch (max) {
-        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-        case g: h = (b - r) / d + 2; break;
-        default: h = (r - g) / d + 4; break;
-      }
-      h /= 6;
-    }
-    return [h * 360, s, l];
-  }
-
-  function hslToRgb(h, s, l) {
-    h = ((h % 360) + 360) % 360;
-    const c = (1 - Math.abs(2 * l - 1)) * s;
-    const hp = h / 60;
-    const x = c * (1 - Math.abs((hp % 2) - 1));
-    let r1 = 0; let g1 = 0; let b1 = 0;
-    if (hp >= 0 && hp < 1) { r1 = c; g1 = x; }
-    else if (hp < 2) { r1 = x; g1 = c; }
-    else if (hp < 3) { g1 = c; b1 = x; }
-    else if (hp < 4) { g1 = x; b1 = c; }
-    else if (hp < 5) { r1 = x; b1 = c; }
-    else { r1 = c; b1 = x; }
-    const m = l - c / 2;
-    return [Math.round((r1 + m) * 255), Math.round((g1 + m) * 255), Math.round((b1 + m) * 255)];
-  }
-
-  function hslToRgbString(h, s, l) {
-    const [r, g, b] = hslToRgb(h, s, l);
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-
-  function rgbToHex(r, g, b) {
-    const toHex = (n) => clamp(Math.round(n), 0, 255).toString(16).padStart(2, '0');
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-  }
-
-  function hashString(str) {
-    let h = 2166136261;
-    for (let i = 0; i < str.length; i += 1) {
-      h ^= str.charCodeAt(i);
-      h = Math.imul(h, 16777619);
-    }
-    return h >>> 0;
-  }
-
-  function resolveAccentMeta(accent) {
-    const info = resolveColorInfo(accent) || hexToRgb(DEFAULT_ACCENT);
-    const baseHsl = info ? rgbToHsl(info.r, info.g, info.b) : rgbToHsl(22, 163, 74);
-    return { accentKey: info?.normalized || DEFAULT_ACCENT, baseHsl };
-  }
-
-  function jitterColorFromAccent(baseHsl, key) {
-    const [baseH, baseS, baseL] = baseHsl;
-    const hash = hashString(String(key));
-    const hueShift = ((hash & 0xff) / 255 - 0.5) * 26;
-    const satShift = (((hash >>> 8) & 0xff) / 255 - 0.5) * 0.25;
-    const lightShift = (((hash >>> 16) & 0xff) / 255 - 0.5) * 0.24;
-    const h = (baseH + hueShift + 360) % 360;
-    const s = clamp(baseS + satShift, 0.2, 0.95);
-    const l = clamp(baseL + lightShift, 0.2, 0.7);
-    return hslToRgbString(h, s, l);
-  }
-
-  const colorCache = new Map();
+  const normalizeTagKey = TagColor.normalizeTagKey;
 
   const defaultState = {
     sessions: [],
@@ -172,7 +58,7 @@
   const rootStyles = getComputedStyle(document.documentElement);
   const accentColor = rootStyles.getPropertyValue('--accent').trim() || DEFAULT_ACCENT;
   const breakSwatchColor = rootStyles.getPropertyValue('--muted').trim() || '#9ca3af';
-  const accentMeta = resolveAccentMeta(accentColor);
+  const accentMeta = TagColor.resolveAccentMeta(accentColor);
 
   const summarySection = document.getElementById('summarySection');
   const timelineSection = document.getElementById('timelineSection');
@@ -514,11 +400,12 @@
         longestSessionMs = duration;
         longestSessionTag = sess.tag;
       }
+      const fallbackKey = TagColor.sessionFallbackKey(sess.sourceStart ?? sess.start);
       segments.push({
         startMs: sess.start,
         endMs: sess.end,
         tag: sess.tag,
-        color: colorForTag(sess.tag, sess.tag || 'untagged')
+        color: colorForTag(sess.tag, fallbackKey)
       });
     });
 
@@ -561,7 +448,12 @@
       const start = Math.max(session.start, dayStart);
       const end = Math.min(rawEnd, dayEnd, nowMs);
       if (end <= start) continue;
-      result.push({ start, end, tag: normalizeDisplayTag(session.tag) });
+      result.push({
+        start,
+        end,
+        tag: normalizeDisplayTag(session.tag),
+        sourceStart: session.start
+      });
     }
     result.sort((a, b) => a.start - b.start);
     return result;
@@ -1326,16 +1218,7 @@
   }
 
   function colorForTag(tag, fallbackKey) {
-    const normalized = normalizeTagKey(tag ?? '');
-    if (normalized && state.tagColors[normalized]) {
-      return state.tagColors[normalized];
-    }
-    const fallback = normalizeTagKey(fallbackKey ?? '');
-    const cacheKey = `${accentMeta.accentKey}|${normalized || fallback || 'untagged'}`;
-    if (!colorCache.has(cacheKey)) {
-      colorCache.set(cacheKey, jitterColorFromAccent(accentMeta.baseHsl, cacheKey));
-    }
-    return colorCache.get(cacheKey);
+    return TagColor.colorForTag(tag, fallbackKey, accentMeta, state.tagColors);
   }
 
   function colorForBreakTag() {
