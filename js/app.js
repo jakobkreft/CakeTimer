@@ -264,7 +264,6 @@
   const rootEl = document.documentElement;
   function applyTheme() { rootEl.classList.toggle('dark', state.theme === 'dark'); }
   applyTheme();
-  setFaviconMode(isRunning());
   const dial = document.getElementById('dial');
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const DIAL_SIZE = 1000;
@@ -570,7 +569,6 @@
     assignDefaultSessionNamesForToday();
     realignBreakLogsForToday();
     saveState();
-    setFaviconMode(true);
     announce('Started'); requestDraw(); updateTagsPanel(); updateWelcome();
   }
 
@@ -585,7 +583,6 @@
     }
     realignBreakLogsForToday();
     saveState();
-    setFaviconMode(false);
     announce('Stopped'); requestDraw(); updateTagsPanel(); updateWelcome();
   }
 
@@ -1223,6 +1220,7 @@
 
     // Topbar quickbar
     updateTopbarUI(dayStart, running, liveMs);
+    setFaviconMode(running);
   }
 
   // drive redraws
@@ -1610,7 +1608,10 @@
   }
 
   // --- Favicon swapper ---
+  let lastFaviconRunning = null;
   function setFaviconMode(running) {
+    if (lastFaviconRunning === running) return;
+    lastFaviconRunning = running;
     const href = running ? 'assets/favicon1.ico' : 'assets/favicon0.ico';
     const head = document.head;
 
