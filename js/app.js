@@ -100,6 +100,7 @@
       badges: [],
       tagColors: {},
       todos: [],
+      ignoredDays: [],
       tagSortWork: 'time-desc',
       tagSortBreak: 'time-desc'
     };
@@ -127,6 +128,9 @@
         }
       }
       base.todos = Array.isArray(s.todos) ? s.todos : [];
+      if (Array.isArray(s.ignoredDays)) {
+        base.ignoredDays = s.ignoredDays.filter(day => typeof day === 'string' && day.trim());
+      }
       if (SORT_ORDER.includes(s.tagSortWork)) base.tagSortWork = s.tagSortWork;
       if (SORT_ORDER.includes(s.tagSortBreak)) base.tagSortBreak = s.tagSortBreak;
       base.version = 4;

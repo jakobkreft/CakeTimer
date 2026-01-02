@@ -355,6 +355,41 @@ body {
   background: var(--progress);
 }
 
+.day-menu {
+  position: absolute;
+  z-index: 120;
+  width: 180px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  border: var(--line) solid var(--border);
+  background: var(--bg);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  transform: translateY(-50%);
+}
+
+.day-menu[hidden] {
+  display: none;
+}
+
+.day-menu-item {
+  background: none;
+  color: var(--fg);
+  border: var(--line) solid var(--border);
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+}
+
+.day-menu-item:hover {
+  background: var(--progress);
+}
+
+.day-menu-item--danger {
+  color: #b91c1c;
+}
+
 /* Dial cursors */
 #dial.dragging {
   cursor: grabbing !important;
@@ -510,6 +545,11 @@ body {
   max-width: 360px;
 }
 
+.daily-card--ignored {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
 .daily-card.goal-met {
   border-color: var(--accent);
 }
@@ -521,9 +561,24 @@ body {
   font-weight: 600;
 }
 
+.daily-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .daily-card-header .day-date {
   font-size: 12px;
   color: var(--muted);
+}
+
+.ignored-pill {
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: var(--line) solid var(--border);
+  padding: 1px 6px;
 }
 
 .daily-card-body {

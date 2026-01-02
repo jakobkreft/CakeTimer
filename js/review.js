@@ -21,7 +21,8 @@
     goalMinutes: 240,
     theme: 'light',
     tagColors: {},
-    todos: []
+    todos: [],
+    ignoredDays: []
   };
 
   let state = { ...defaultState };
@@ -48,9 +49,20 @@
         }
       }
       if (Array.isArray(parsed.todos)) state.todos = normalizeTodos(parsed.todos);
+      if (Array.isArray(parsed.ignoredDays)) {
+        state.ignoredDays = parsed.ignoredDays.filter(day => typeof day === 'string' && day.trim());
+      }
     }
   } catch (err) {
     console.error('Unable to parse saved review data', err);
+  }
+
+  function saveState() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    } catch (err) {
+      console.warn('Unable to save review data', err);
+    }
   }
 
   document.documentElement.classList.toggle('dark', state.theme === 'dark');
@@ -125,34 +137,131 @@
     }
   });
 
-  const hasSessions = state.sessions.some((s) => typeof s.start === 'number');
-  const hasBreaks = state.breakLogs.some((b) => typeof b.start === 'number');
+  const dayMenu = document.createElement('div');
+  dayMenu.className = 'day-menu';
+  dayMenu.hidden = true;
+  const dayMenuIgnoreBtn = document.createElement('button');
+  dayMenuIgnoreBtn.type = 'button';
+  dayMenuIgnoreBtn.className = 'day-menu-item';
+  const dayMenuDeleteBtn = document.createElement('button');
+  dayMenuDeleteBtn.type = 'button';
+  dayMenuDeleteBtn.className = 'day-menu-item day-menu-item--danger';
+  dayMenuDeleteBtn.textContent = 'Delete day…';
+  dayMenu.appendChild(dayMenuIgnoreBtn);
+  dayMenu.appendChild(dayMenuDeleteBtn);
+  document.body.appendChild(dayMenu);
 
-  if (!hasSessions && !hasBreaks) {
-    revealEmpty();
-    return;
+  let dayMenuState = null;
+
+  function isDayIgnored(dayStr) {
+    return Array.isArray(state.ignoredDays) && state.ignoredDays.includes(dayStr);
   }
 
-  const data = buildData(Date.now());
-
-  if (!data.dailyData.length) {
-    revealEmpty();
-    return;
+  function setDayIgnored(dayStr, ignored) {
+    if (!Array.isArray(state.ignoredDays)) state.ignoredDays = [];
+    const idx = state.ignoredDays.indexOf(dayStr);
+    if (ignored && idx === -1) state.ignoredDays.push(dayStr);
+    if (!ignored && idx !== -1) state.ignoredDays.splice(idx, 1);
+    saveState();
   }
 
-  if (emptyState && emptyState.parentElement) emptyState.remove();
-
-  if (rangeLabelEl && data.firstActiveDate && data.lastActiveDate) {
-    rangeLabelEl.textContent = formatDateRange(data.firstActiveDate, data.lastActiveDate);
+  function openDayMenu(day, anchorEl) {
+    if (!dayMenu || !anchorEl) return;
+    closeDayMenu();
+    const dayStr = day.dayStr || ymdFromMs(day.dayStart);
+    dayMenuState = { dayStart: day.dayStart, dayStr };
+    dayMenuIgnoreBtn.textContent = isDayIgnored(dayStr) ? 'Unignore day' : 'Ignore day';
+    const rect = anchorEl.getBoundingClientRect();
+    const scrollX = window.scrollX || document.documentElement.scrollLeft || 0;
+    const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+    const menuWidth = 180;
+    let left = rect.left + scrollX + rect.width / 2 - menuWidth / 2;
+    const viewportLeft = scrollX + 8;
+    const viewportRight = scrollX + window.innerWidth - menuWidth - 8;
+    if (left < viewportLeft) left = viewportLeft;
+    if (left > viewportRight) left = viewportRight;
+    const top = rect.top + scrollY + rect.height / 2;
+    dayMenu.style.left = `${left}px`;
+    dayMenu.style.top = `${top}px`;
+    dayMenu.hidden = false;
   }
 
-  renderOverview(data);
-  renderActivityGraph(data);
-  renderDailyTimeline(data);
-  renderWeekly(data);
-  renderMonthly(data);
-  renderTagStats(data);
-  renderBreakStats(data);
+  function closeDayMenu() {
+    if (dayMenu.hidden) return;
+    dayMenu.hidden = true;
+    dayMenuState = null;
+  }
+
+  dayMenuIgnoreBtn.addEventListener('click', () => {
+    if (!dayMenuState) return;
+    const ignored = isDayIgnored(dayMenuState.dayStr);
+    setDayIgnored(dayMenuState.dayStr, !ignored);
+    closeDayMenu();
+    renderAll();
+  });
+
+  dayMenuDeleteBtn.addEventListener('click', () => {
+    if (!dayMenuState) return;
+    const target = { ...dayMenuState };
+    closeDayMenu();
+    const confirmed = confirm('Delete all sessions, breaks, and completed todos for this day? This cannot be undone.');
+    if (!confirmed) return;
+    deleteDay(target.dayStart);
+    saveState();
+    renderAll();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (dayMenu.hidden) return;
+    if (dayMenu.contains(e.target)) return;
+    closeDayMenu();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !dayMenu.hidden) {
+      e.preventDefault();
+      closeDayMenu();
+    }
+  });
+
+  window.addEventListener('resize', closeDayMenu);
+  window.addEventListener('scroll', closeDayMenu, true);
+
+  renderAll();
+
+  function renderAll() {
+    closeDayMenu();
+    const hasSessions = state.sessions.some((s) => typeof s.start === 'number');
+    const hasBreaks = state.breakLogs.some((b) => typeof b.start === 'number');
+
+    if (!hasSessions && !hasBreaks) {
+      revealEmpty();
+      return;
+    }
+
+    const data = buildData(Date.now());
+
+    if (!data.dailyData.length) {
+      revealEmpty();
+      return;
+    }
+
+    if (emptyState && emptyState.parentElement) emptyState.remove();
+
+    if (rangeLabelEl && data.firstActiveDate && data.lastActiveDate) {
+      rangeLabelEl.textContent = formatDateRange(data.firstActiveDate, data.lastActiveDate);
+    } else if (rangeLabelEl) {
+      rangeLabelEl.textContent = '';
+    }
+
+    renderOverview(data);
+    renderActivityGraph(data);
+    renderDailyTimeline(data);
+    renderWeekly(data);
+    renderMonthly(data);
+    renderTagStats(data);
+    renderBreakStats(data);
+  }
 
   function revealEmpty() {
     if (summarySection) summarySection.hidden = true;
@@ -163,6 +272,70 @@
     if (tagSection) tagSection.hidden = true;
     if (breakSection) breakSection.hidden = true;
     if (emptyState) emptyState.hidden = false;
+  }
+
+  function deleteDay(dayStart) {
+    const dayEnd = dayStart + msPerDay;
+    const nowMs = Date.now();
+
+    const nextSessions = [];
+    for (const sess of state.sessions) {
+      if (!sess || typeof sess.start !== 'number') continue;
+      const sessEnd = sess.end == null ? nowMs : sess.end;
+      if (sessEnd <= dayStart || sess.start >= dayEnd) {
+        nextSessions.push(sess);
+        continue;
+      }
+      if (sess.start < dayStart) {
+        nextSessions.push({ start: sess.start, end: dayStart, tag: sess.tag });
+      }
+      if (sessEnd > dayEnd) {
+        nextSessions.push({
+          start: dayEnd,
+          end: sess.end == null ? null : sess.end,
+          tag: sess.tag
+        });
+      }
+    }
+    nextSessions.sort((a, b) => a.start - b.start);
+    state.sessions = nextSessions;
+
+    const nextBreaks = [];
+    for (const br of state.breakLogs) {
+      if (!br || typeof br.start !== 'number' || typeof br.end !== 'number') continue;
+      if (br.end <= dayStart || br.start >= dayEnd) {
+        nextBreaks.push(br);
+        continue;
+      }
+      if (br.start < dayStart) {
+        const seg = { ...br, end: dayStart };
+        if (typeof seg.tagTs !== 'number' || seg.tagTs < seg.start || seg.tagTs > seg.end) {
+          seg.tagTs = Math.round((seg.start + seg.end) / 2);
+        }
+        nextBreaks.push(seg);
+      }
+      if (br.end > dayEnd) {
+        const seg = { ...br, start: dayEnd };
+        if (typeof seg.tagTs !== 'number' || seg.tagTs < seg.start || seg.tagTs > seg.end) {
+          seg.tagTs = Math.round((seg.start + seg.end) / 2);
+        }
+        nextBreaks.push(seg);
+      }
+    }
+    nextBreaks.sort((a, b) => a.start - b.start);
+    state.breakLogs = nextBreaks;
+
+    if (Array.isArray(state.todos)) {
+      state.todos = state.todos.filter((todo) => {
+        if (!todo || !todo.done || typeof todo.completedAt !== 'number') return true;
+        return todo.completedAt < dayStart || todo.completedAt >= dayEnd;
+      });
+    }
+
+    const dayStr = ymdFromMs(dayStart);
+    if (Array.isArray(state.ignoredDays)) {
+      state.ignoredDays = state.ignoredDays.filter(day => day !== dayStr);
+    }
   }
 
   function normalizeSessions(list) {
@@ -233,6 +406,7 @@
     const firstDayStart = startOfDayMs(earliest);
     const lastDayStart = startOfDayMs(nowMs);
     const goalMs = Number.isFinite(state.goalMinutes) ? Math.max(0, state.goalMinutes) * msPerMinute : 0;
+    const ignoredSet = new Set(Array.isArray(state.ignoredDays) ? state.ignoredDays : []);
 
     const dailyData = [];
     const weeklyMap = new Map();
@@ -253,30 +427,14 @@
     let lastActiveDate = null;
 
     for (let dayStart = firstDayStart; dayStart <= lastDayStart; dayStart += msPerDay) {
-      const day = buildDay(dayStart, nowMs, goalMs);
+      const dayStr = ymdFromMs(dayStart);
+      const ignored = ignoredSet.has(dayStr);
+      const day = buildDay(dayStart, nowMs, goalMs, ignored, dayStr);
       if (!day) continue;
 
       dailyData.push(day);
-      totalWorkMs += day.workMs;
-      totalBreakMs += day.breakMs;
-      totalTaggedBreakMs += day.taggedBreakMs;
-      totalSessions += day.sessionCount;
-      activeDays += 1;
-      if (day.goalMet) goalHits += 1;
       if (!firstActiveDate) firstActiveDate = day.date;
       lastActiveDate = day.date;
-      if (day.workMs > longestDay.ms) longestDay = { ms: day.workMs, date: day.date };
-      if (day.longestSessionMs > longestSession.ms) {
-        longestSession = { ms: day.longestSessionMs, date: day.date, tag: day.longestSessionTag };
-      }
-
-      day.tagDurations.forEach((ms, tag) => {
-        tagTotals.set(tag, (tagTotals.get(tag) || 0) + ms);
-      });
-      day.breakTagDurations.forEach((ms, tag) => {
-        breakTagTotals.set(tag, (breakTagTotals.get(tag) || 0) + ms);
-      });
-      totalTodosCompleted += day.todosCompleted.length;
 
       const weekKey = startOfWeekMs(day.dayStart);
       let week = weeklyMap.get(weekKey);
@@ -299,13 +457,6 @@
         };
         weeklyMap.set(weekKey, week);
       }
-      week.workMs += day.workMs;
-      week.breakMs += day.breakMs;
-      week.sessionCount += day.sessionCount;
-      week.activeDays += 1;
-      if (day.goalMet) week.goalHits += 1;
-      mergeDurationMap(week.tagDurations, day.tagDurations);
-      mergeDurationMap(week.breakTagDurations, day.breakTagDurations);
       week.dayRefs.push(day);
 
       const monthKey = monthKeyFromDay(day.dayStart);
@@ -328,12 +479,39 @@
         };
         monthlyMap.set(monthKey, month);
       }
-      month.workMs += day.workMs;
-      month.breakMs += day.breakMs;
-      month.sessionCount += day.sessionCount;
-      month.activeDays += 1;
-      mergeDurationMap(month.tagDurations, day.tagDurations);
-      mergeDurationMap(month.breakTagDurations, day.breakTagDurations);
+
+      if (!day.ignored) {
+        totalWorkMs += day.workMs;
+        totalBreakMs += day.breakMs;
+        totalTaggedBreakMs += day.taggedBreakMs;
+        totalSessions += day.sessionCount;
+        activeDays += 1;
+        if (day.goalMet) goalHits += 1;
+        if (day.workMs > longestDay.ms) longestDay = { ms: day.workMs, date: day.date };
+        if (day.longestSessionMs > longestSession.ms) {
+          longestSession = { ms: day.longestSessionMs, date: day.date, tag: day.longestSessionTag };
+        }
+        day.tagDurations.forEach((ms, tag) => {
+          tagTotals.set(tag, (tagTotals.get(tag) || 0) + ms);
+        });
+        day.breakTagDurations.forEach((ms, tag) => {
+          breakTagTotals.set(tag, (breakTagTotals.get(tag) || 0) + ms);
+        });
+        totalTodosCompleted += day.todosCompleted.length;
+        week.workMs += day.workMs;
+        week.breakMs += day.breakMs;
+        week.sessionCount += day.sessionCount;
+        week.activeDays += 1;
+        if (day.goalMet) week.goalHits += 1;
+        mergeDurationMap(week.tagDurations, day.tagDurations);
+        mergeDurationMap(week.breakTagDurations, day.breakTagDurations);
+        month.workMs += day.workMs;
+        month.breakMs += day.breakMs;
+        month.sessionCount += day.sessionCount;
+        month.activeDays += 1;
+        mergeDurationMap(month.tagDurations, day.tagDurations);
+        mergeDurationMap(month.breakTagDurations, day.breakTagDurations);
+      }
     }
 
     dailyData.sort((a, b) => b.dayStart - a.dayStart);
@@ -381,7 +559,7 @@
     };
   }
 
-  function buildDay(dayStart, nowMs, goalMs) {
+  function buildDay(dayStart, nowMs, goalMs, ignored, dayStr) {
     const daySessions = sessionsForDay(dayStart, nowMs);
     if (!daySessions.length) return null;
 
@@ -422,6 +600,8 @@
     return {
       dayStart,
       date: new Date(dayStart),
+      dayStr: dayStr || ymdFromMs(dayStart),
+      ignored: !!ignored,
       workMs,
       breakMs,
       taggedBreakMs,
@@ -598,7 +778,7 @@
     // Build a map of dayStart -> workMs from existing data
     const workByDay = new Map();
     data.dailyData.forEach((day) => {
-      workByDay.set(day.dayStart, day.workMs);
+      workByDay.set(day.dayStart, day.ignored ? 0 : day.workMs);
     });
 
     // Thresholds for intensity levels (in minutes)
@@ -757,7 +937,8 @@
   function createDailyCard(day) {
     const card = document.createElement('article');
     card.className = 'daily-card';
-    if (day.goalMet) card.classList.add('goal-met');
+    if (day.goalMet && !day.ignored) card.classList.add('goal-met');
+    if (day.ignored) card.classList.add('daily-card--ignored');
 
     const header = document.createElement('div');
     header.className = 'daily-card-header';
@@ -766,8 +947,17 @@
     const dayDate = document.createElement('span');
     dayDate.className = 'day-date';
     dayDate.textContent = day.date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    const meta = document.createElement('div');
+    meta.className = 'daily-card-meta';
+    meta.appendChild(dayDate);
+    if (day.ignored) {
+      const ignored = document.createElement('span');
+      ignored.className = 'ignored-pill';
+      ignored.textContent = 'Ignored';
+      meta.appendChild(ignored);
+    }
     header.appendChild(dayName);
-    header.appendChild(dayDate);
+    header.appendChild(meta);
     card.appendChild(header);
 
     const body = document.createElement('div');
@@ -850,6 +1040,18 @@
       block.appendChild(list);
       card.appendChild(block);
     }
+
+    card.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target.closest('a, button, summary')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!dayMenu.hidden && dayMenuState?.dayStart === day.dayStart) {
+        closeDayMenu();
+        return;
+      }
+      openDayMenu(day, card);
+    });
 
     return card;
   }
@@ -1189,6 +1391,11 @@
     if (!start || !end) return '';
     const opts = { month: 'short', day: 'numeric', year: 'numeric' };
     return `${start.toLocaleDateString([], opts)} → ${end.toLocaleDateString([], opts)}`;
+  }
+
+  function ymdFromMs(ms) {
+    const d = new Date(ms);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
 
   function formatRangeShort(startMs, endMs) {
