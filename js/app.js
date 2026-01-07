@@ -870,10 +870,11 @@
         const tagStr = (seg.tag && seg.tag.trim()) ? seg.tag : '(Session)';
         tip.style.display = 'block'; tip.style.left = `${e.clientX}px`; tip.style.top = `${e.clientY}px`;
         const mins = Math.floor(durMs / 60000), secs = Math.floor((durMs % 60000) / 1000);
-        tip.innerHTML = `<b>SESSION</b><br>${fmtTime(sTime)} → ${fmtTime(eTime)}<br>${Math.floor(mins / 60)}h ${mins % 60}m ${secs}s<br>TAG: ${escapeHtml(tagStr)}<br><small>Press <b>T</b> to rename • Drag edge to adjust</small>`;
+        tip.innerHTML = `<b>SESSION</b><br>${fmtTime(sTime)} → ${fmtTime(eTime)}<br>${Math.floor(mins / 60)}h ${mins % 60}m ${secs}s<br>TAG: ${escapeHtml(tagStr)}<br><small>Press <b>T</b> to rename<br>Drag edge to adjust</small>`;
       } else {
         const t = timeFromAngle(res.theta, dayStart);
-        if (t >= dayStart && t <= Math.min(nowMs, dayStart + msPerDay)) {
+        const dayEnd = dayStart + msPerDay;
+        if (t >= dayStart && t <= Math.min(nowMs, dayEnd)) {
           const gaps = gapsForDay(dayStart, res.segs);
           const gap = gaps.find(g => t >= g.startMs && t <= g.endMs);
           if (gap) {
@@ -885,6 +886,16 @@
             const mins = Math.floor(durMs / 60000), secs = Math.floor((durMs % 60000) / 1000);
             tip.innerHTML = `<b>BREAK</b><br>${fmtTime(sTime)} → ${fmtTime(eTime)}<br>${Math.floor(mins / 60)}h ${mins % 60}m ${secs}s<br>${tag}<small>Press <b>T</b> to tag</small>`;
           } else tip.style.display = 'none';
+        } else if (t > nowMs && t <= dayEnd) {
+          const remainingMs = Math.max(0, dayEnd - nowMs);
+          if (remainingMs > 0) {
+            const endLabel = (dayEnd === dayStart + msPerDay) ? '24:00' : fmtTime(new Date(dayEnd));
+            tip.style.display = 'block'; tip.style.left = `${e.clientX}px`; tip.style.top = `${e.clientY}px`;
+            const mins = Math.floor(remainingMs / 60000), secs = Math.floor((remainingMs % 60000) / 1000);
+            tip.innerHTML = `<b>REMAINING</b><br>${fmtTime(new Date(nowMs))} → ${endLabel}<br>${Math.floor(mins / 60)}h ${mins % 60}m ${secs}s`;
+          } else {
+            tip.style.display = 'none';
+          }
         } else {
           tip.style.display = 'none';
         }
