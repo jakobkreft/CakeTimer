@@ -240,7 +240,6 @@
 
   // Side controls
   const toggleBtn = document.getElementById('toggleBtn');
-  const resetBtn = document.getElementById('resetBtn');
   const goalText = document.getElementById('goalText');
   const goalMinus = document.getElementById('goalMinus');
   const goalPlus = document.getElementById('goalPlus');
@@ -557,25 +556,6 @@
     announce('Stopped'); requestDraw(); updateTagsPanel(); updateWelcome();
   }
 
-  function clearToday() {
-    const { start, end } = todayBounds(new Date());
-    const nowMs = Date.now();
-    if (isRunning()) stopSession();
-    const next = [];
-    for (const sess of state.sessions) {
-      const s = sess.start, e = effectiveEnd(sess, nowMs);
-      if (e <= start || s >= end) next.push(sess);
-      else {
-        if (s < start) next.push({ start: s, end: start, tag: sess.tag });
-        if (e > end) next.push({ start: end, end: e, tag: sess.tag });
-      }
-    }
-    state.sessions = next;
-    state.breakLogs = state.breakLogs.filter(b => b.end <= start || b.start >= end);
-    removeAllBadgesForDay(ymd(new Date(start)));
-    saveState(); announce('Cleared today'); requestDraw(); updateTagsPanel(); updateWelcome();
-  }
-
   function setGoal(mins) { state.goalMinutes = clamp(Math.round(mins), 0, 24 * 60); saveState(); requestDraw(); }
   function toggleTheme() {
     state.theme = (state.theme === 'dark') ? 'light' : 'dark';
@@ -831,7 +811,6 @@
   toggleBtn.addEventListener('click', toggleTimer);
   topToggleBtn.addEventListener('click', toggleTimer);
 
-  resetBtn.addEventListener('click', () => { if (confirm('Clear ONLY today?')) clearToday(); });
 
   window.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
@@ -1273,12 +1252,6 @@
     }
     if (state.badges.length > 60) { state.badges.splice(0, state.badges.length - 60); changed = true; }
     if (changed) saveState();
-  }
-
-  function removeAllBadgesForDay(dayStr) {
-    const orig = state.badges.length;
-    state.badges = state.badges.filter(b => b.date !== dayStr);
-    if (state.badges.length !== orig) saveState();
   }
 
   function renderBadgesRow() {

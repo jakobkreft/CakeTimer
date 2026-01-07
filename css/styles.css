@@ -46,6 +46,10 @@ body {
   background: var(--bg);
 }
 
+button {
+  font: inherit;
+}
+
 /* --- Topbar layout: three columns, centered quickbar --- */
 .topbar {
   display: grid;
@@ -78,17 +82,14 @@ body {
 }
 
 .topbar .link,
-.topbar button {
+.topbar button,
+.controls button {
   color: var(--fg);
   background: none;
   border: var(--line) solid var(--border);
-  padding: 4px 8px;
+  padding: 4px 10px 2px 10px;
   text-decoration: none;
   cursor: pointer;
-}
-
-.info-btn {
-  font: inherit;
 }
 
 /* Center quickbar */
@@ -183,12 +184,13 @@ body {
   margin-bottom: 8px;
 }
 
-.controls button {
-  background: none;
-  color: var(--fg);
-  border: var(--line) solid var(--border);
-  padding: 6px 10px;
-  cursor: pointer;
+#goalMinus,
+#goalPlus {
+  padding: 2px 5px 1px 5px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .goal-label {
@@ -226,7 +228,7 @@ body {
 
 .welcome {
   border: var(--line) dashed var(--border);
-  padding: 4px 6px;
+  padding: 4px 10px 2px 10px;
   display: inline-block;
   margin-bottom: 6px;
 }
@@ -824,7 +826,11 @@ body {
   background: none;
   color: var(--fg);
   border: var(--line) solid var(--border);
-  padding: 4px 8px;
+  padding: 2px 6px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 
