@@ -237,7 +237,7 @@
   function renderAll() {
     closeDayMenu();
     const hasSessions = state.sessions.some((s) => typeof s.start === 'number');
-    const hasBreaks = state.breakLogs.some((b) => typeof b.start === 'number');
+    const hasBreaks = state.breakLogs.some((b) => typeof b.tagTs === 'number');
 
     if (!hasSessions && !hasBreaks) {
       revealEmpty();
@@ -307,27 +307,11 @@
 
     const nextBreaks = [];
     for (const br of state.breakLogs) {
-      if (!br || typeof br.start !== 'number' || typeof br.end !== 'number') continue;
-      if (br.end <= dayStart || br.start >= dayEnd) {
+      if (!br || typeof br.tagTs !== 'number') continue;
+      if (br.tagTs < dayStart || br.tagTs >= dayEnd) {
         nextBreaks.push(br);
-        continue;
-      }
-      if (br.start < dayStart) {
-        const seg = { ...br, end: dayStart };
-        if (typeof seg.tagTs !== 'number' || seg.tagTs < seg.start || seg.tagTs > seg.end) {
-          seg.tagTs = Math.round((seg.start + seg.end) / 2);
-        }
-        nextBreaks.push(seg);
-      }
-      if (br.end > dayEnd) {
-        const seg = { ...br, start: dayEnd };
-        if (typeof seg.tagTs !== 'number' || seg.tagTs < seg.start || seg.tagTs > seg.end) {
-          seg.tagTs = Math.round((seg.start + seg.end) / 2);
-        }
-        nextBreaks.push(seg);
       }
     }
-    nextBreaks.sort((a, b) => a.start - b.start);
     state.breakLogs = nextBreaks;
 
     if (Array.isArray(state.todos)) {
@@ -360,16 +344,23 @@
 
   function normalizeBreakLogs(list) {
     const out = [];
+    if (!Array.isArray(list)) return out;
     for (const item of list) {
-      if (!item || typeof item.start !== 'number' || typeof item.end !== 'number') continue;
-      const start = Number(item.start);
-      const end = Number(item.end);
-      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue;
-      const tag = typeof item.tag === 'string' ? item.tag : (item.tag == null ? null : String(item.tag));
-      const tagTs = typeof item.tagTs === 'number' ? Number(item.tagTs) : null;
-      out.push({ start, end, tag, tagTs });
+      if (!item) continue;
+      const tag = typeof item.tag === 'string' ? item.tag.trim() : (item.tag == null ? '' : String(item.tag).trim());
+      if (!tag) continue;
+      let tagTs = null;
+      if (typeof item.tagTs === 'number' && !Number.isNaN(item.tagTs)) {
+        tagTs = Number(item.tagTs);
+      } else if (typeof item.start === 'number' && typeof item.end === 'number') {
+        if (!Number.isNaN(item.start) && !Number.isNaN(item.end)) {
+          tagTs = Math.round((item.start + item.end) / 2);
+        }
+      }
+      if (tagTs == null || Number.isNaN(tagTs)) continue;
+      out.push({ tag, tagTs });
     }
-    out.sort((a, b) => a.start - b.start);
+    out.sort((a, b) => a.tagTs - b.tagTs);
     return out;
   }
 
@@ -399,7 +390,6 @@
       if (typeof s.start === 'number') earliest = Math.min(earliest, s.start);
     });
     state.breakLogs.forEach((b) => {
-      if (typeof b.start === 'number') earliest = Math.min(earliest, b.start);
       if (typeof b.tagTs === 'number') earliest = Math.min(earliest, b.tagTs);
     });
     state.todos.forEach((todo) => {
@@ -594,10 +584,10 @@
       });
     });
 
-    const breakSegments = gapsBetweenSessions(daySessions);
+    const breakSegments = gapsForDay(dayStart, dayEnd, nowMs, daySessions);
     const breakMs = breakSegments.reduce((sum, gap) => sum + (gap.end - gap.start), 0);
 
-    const breakTagDurations = breakTagsForDay(dayStart, dayEnd, nowMs);
+    const breakTagDurations = breakTagsForDay(breakSegments);
     const todosCompleted = completedTodosForDay(dayStart, dayEnd);
     let taggedBreakMs = 0;
     breakTagDurations.forEach((ms) => {
@@ -645,33 +635,42 @@
     return result;
   }
 
-  function gapsBetweenSessions(sessions) {
+  function gapsForDay(dayStart, dayEnd, nowMs, sessions) {
     const gaps = [];
-    for (let i = 1; i < sessions.length; i += 1) {
-      const prev = sessions[i - 1];
-      const current = sessions[i];
-      if (current.start > prev.end) {
-        gaps.push({ start: prev.end, end: current.start });
+    const clampEnd = Math.min(dayEnd, nowMs);
+    let cursor = dayStart;
+    for (const sess of sessions) {
+      if (sess.start > cursor) {
+        gaps.push({ start: cursor, end: Math.min(sess.start, clampEnd) });
       }
+      cursor = Math.max(cursor, sess.end);
+      if (cursor >= clampEnd) break;
     }
+    if (cursor < clampEnd) gaps.push({ start: cursor, end: clampEnd });
     return gaps;
   }
 
-  function breakTagsForDay(dayStart, dayEnd, nowMs) {
+  function breakTagsForDay(gaps) {
     const result = new Map();
-    if (!state.breakLogs.length) return result;
-    for (const log of state.breakLogs) {
-      if (!log || typeof log.start !== 'number' || typeof log.end !== 'number') continue;
-      if (log.end <= dayStart || log.start >= dayEnd) continue;
-      if (typeof log.tagTs === 'number' && (log.tagTs < dayStart || log.tagTs >= dayEnd)) continue;
-      const start = Math.max(log.start, dayStart);
-      const end = Math.min(log.end, dayEnd, nowMs);
-      if (end <= start) continue;
-      const tag = normalizeDisplayTag(log.tag);
+    if (!state.breakLogs.length || !gaps.length) return result;
+    for (const gap of gaps) {
+      const entry = findBreakTagForGap(gap);
+      if (!entry) continue;
+      const tag = normalizeDisplayTag(entry.tag);
       if (!tag) continue;
-      result.set(tag, (result.get(tag) || 0) + (end - start));
+      const duration = gap.end - gap.start;
+      if (duration <= 0) continue;
+      result.set(tag, (result.get(tag) || 0) + duration);
     }
     return result;
+  }
+
+  function findBreakTagForGap(gap) {
+    for (const log of state.breakLogs) {
+      if (!log || typeof log.tagTs !== 'number' || !log.tag) continue;
+      if (log.tagTs >= gap.start && log.tagTs <= gap.end) return log;
+    }
+    return null;
   }
 
   function completedTodosForDay(dayStart, dayEnd) {
@@ -1293,7 +1292,7 @@
 
     const summary = document.createElement('div');
     summary.className = 'stat-summary';
-    summary.textContent = `Breaks between sessions: ${formatDuration(data.totals.breakMs)} (${formatDuration(data.totals.taggedBreakMs)} tagged)`;
+    summary.textContent = `Breaks (all gaps): ${formatDuration(data.totals.breakMs)} (${formatDuration(data.totals.taggedBreakMs)} tagged)`;
     breakStatsRoot.appendChild(summary);
 
     if (!data.breakTagTotalsArray.length) {

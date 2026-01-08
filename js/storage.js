@@ -33,6 +33,28 @@
     };
   }
 
+  function normalizeBreakLogs(list) {
+    const out = [];
+    if (!Array.isArray(list)) return out;
+    for (const item of list) {
+      if (!item) continue;
+      const tag = typeof item.tag === 'string' ? item.tag.trim() : (item.tag == null ? '' : String(item.tag).trim());
+      if (!tag) continue;
+      let tagTs = null;
+      if (typeof item.tagTs === 'number' && !Number.isNaN(item.tagTs)) {
+        tagTs = Number(item.tagTs);
+      } else if (typeof item.start === 'number' && typeof item.end === 'number') {
+        if (!Number.isNaN(item.start) && !Number.isNaN(item.end)) {
+          tagTs = Math.round((item.start + item.end) / 2);
+        }
+      }
+      if (tagTs == null || Number.isNaN(tagTs)) continue;
+      out.push({ tag, tagTs });
+    }
+    out.sort((a, b) => a.tagTs - b.tagTs);
+    return out;
+  }
+
   function hydrateState(raw) {
     const base = defaultState();
     if (!raw || typeof raw !== 'object') return base;
@@ -40,10 +62,7 @@
     base.sessions = Array.isArray(s.sessions) ? s.sessions : [];
     base.goalMinutes = typeof s.goalMinutes === 'number' ? s.goalMinutes : base.goalMinutes;
     base.theme = (s.theme === 'dark' ? 'dark' : 'light');
-    base.breakLogs = Array.isArray(s.breakLogs) ? s.breakLogs : [];
-    for (const b of base.breakLogs) {
-      if (typeof b.tagTs !== 'number') b.tagTs = Math.round((b.start + b.end) / 2);
-    }
+    base.breakLogs = normalizeBreakLogs(s.breakLogs);
     base.streak = s.streak && typeof s.streak === 'object' ? s.streak : base.streak;
     base.badges = Array.isArray(s.badges) ? s.badges : [];
     if (s.tagColors && typeof s.tagColors === 'object') {

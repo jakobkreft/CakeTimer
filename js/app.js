@@ -462,7 +462,6 @@
     if (isRunning()) return;
     state.sessions.push({ start: Date.now(), end: null });
     assignDefaultSessionNamesForToday();
-    realignBreakLogsForToday();
     saveState();
     announce('Started'); requestDraw(); updateTagsPanel(); updateWelcome();
   }
@@ -476,7 +475,6 @@
     } else {
       last.end = now;
     }
-    realignBreakLogsForToday();
     saveState();
     updateStreakUI();
     announce('Stopped'); requestDraw(); updateTagsPanel(); updateWelcome();
@@ -558,8 +556,7 @@
     segs.sort((a, b) => a.startMs - b.startMs);
     return segs;
   }
-  function gapsForDay(dayStart, segs) {
-    const nowMs = Date.now();
+  function gapsForDay(dayStart, segs, nowMs = Date.now()) {
     const dayEnd = dayEndFromStart(dayStart);
     const clampEnd = Math.min(nowMs, dayEnd);
     const gaps = [];
@@ -598,32 +595,6 @@
         let candidate = nextNum + 1; while (usedNums.has(candidate)) candidate++;
         nextNum = candidate; usedNums.add(candidate);
         state.sessions[i].tag = `Session ${candidate}`;
-        changed = true;
-      }
-    }
-    if (changed) saveState();
-  }
-
-  // ---------- Break logs realignment ----------
-  function realignBreakLogsForToday() {
-    const { start: dayStart } = todayBounds(new Date());
-    const dayEnd = dayEndFromStart(dayStart);
-    const segs = segmentsForDay(dayStart, Date.now(), state.sessions);
-    const gaps = gapsForDay(dayStart, segs);
-
-    let changed = false;
-    for (let i = state.breakLogs.length - 1; i >= 0; i--) {
-      const b = state.breakLogs[i];
-      if (typeof b.tagTs !== 'number') b.tagTs = Math.round((b.start + b.end) / 2);
-      if (b.tagTs < dayStart || b.tagTs > Math.min(Date.now(), dayEnd)) continue;
-
-      const gap = gaps.find(g => b.tagTs >= g.startMs && b.tagTs <= g.endMs);
-      if (gap) {
-        if (b.start !== gap.startMs || b.end !== gap.endMs) {
-          b.start = gap.startMs; b.end = gap.endMs; changed = true;
-        }
-      } else {
-        state.breakLogs.splice(i, 1);
         changed = true;
       }
     }
@@ -782,11 +753,11 @@
         const t = timeFromAngle(res.theta, dayStart);
         const dayEnd = dayEndFromStart(dayStart);
         if (t >= dayStart && t <= Math.min(nowMs, dayEnd)) {
-          const gaps = gapsForDay(dayStart, res.segs);
+          const gaps = gapsForDay(dayStart, res.segs, nowMs);
           const gap = gaps.find(g => t >= g.startMs && t <= g.endMs);
           if (gap) {
             const sTime = new Date(gap.startMs), eTime = new Date(gap.endMs);
-            const existing = findBreakLogCovering(gap.startMs, gap.endMs, t);
+            const existing = findBreakTagForGap(gap);
             const tag = existing?.tag ? `TAG: ${escapeHtml(existing.tag)}<br>` : '';
             tip.style.display = 'block'; tip.style.left = `${e.clientX}px`; tip.style.top = `${e.clientY}px`;
             const durMs = gap.endMs - gap.startMs;
@@ -871,7 +842,6 @@
         saveState();
       }
       assignDefaultSessionNamesForToday();
-      realignBreakLogsForToday();
 
       dial.releasePointerCapture(e.pointerId);
       drag = null; dragCandidate = null;
@@ -913,35 +883,53 @@
       const theta = hover.theta;
       const t = timeFromAngle(theta, dayStart);
       if (t < dayStart || t > Math.min(nowMs, dayEnd)) return;
-      const gaps = gapsForDay(dayStart, segs);
+      const gaps = gapsForDay(dayStart, segs, nowMs);
       const gap = gaps.find(g => t >= g.startMs && t <= g.endMs);
       if (!gap) return;
-      const existing = findBreakLogCovering(gap.startMs, gap.endMs, t);
-      const current = existing?.tag || '';
+      const matches = findBreakTagsForGap(gap);
+      const primary = matches.length ? matches[0].log : null;
+      const current = primary?.tag || '';
       const input = prompt('Tag this break (text):', current);
       if (input === null) return;
       const val = input.trim();
-      if (existing) {
-        existing.tag = val || undefined;
-        if (!existing.tag) {
-          const ix = state.breakLogs.indexOf(existing);
-          if (ix >= 0) state.breakLogs.splice(ix, 1);
+      if (matches.length) {
+        if (val) {
+          primary.tag = val;
+          primary.tagTs = t;
+          for (let i = matches.length - 1; i >= 1; i--) {
+            state.breakLogs.splice(matches[i].index, 1);
+          }
         } else {
-          if (typeof existing.tagTs !== 'number') existing.tagTs = t;
-          existing.start = gap.startMs; existing.end = gap.endMs;
+          for (let i = matches.length - 1; i >= 0; i--) {
+            state.breakLogs.splice(matches[i].index, 1);
+          }
         }
       } else if (val) {
-        state.breakLogs.push({ start: gap.startMs, end: gap.endMs, tag: val, tagTs: t });
+        state.breakLogs.push({ tag: val, tagTs: t });
+      } else {
+        return;
       }
       saveState();
-      realignBreakLogsForToday();
       updateTagsPanel(); requestDraw();
     }
   }
 
-  function findBreakLogCovering(gapStart, gapEnd, t) {
-    return state.breakLogs.find(b => b.tagTs != null && b.tagTs >= gapStart && b.tagTs <= gapEnd)
-      || state.breakLogs.find(b => b.start <= t && b.end >= t && b.start >= gapStart - 1000 && b.end <= gapEnd + 1000);
+  function findBreakTagsForGap(gap) {
+    const matches = [];
+    if (!gap) return matches;
+    for (let i = 0; i < state.breakLogs.length; i++) {
+      const b = state.breakLogs[i];
+      if (!b || typeof b.tagTs !== 'number' || !b.tag) continue;
+      if (b.tagTs >= gap.startMs && b.tagTs <= gap.endMs) {
+        matches.push({ index: i, log: b });
+      }
+    }
+    return matches;
+  }
+
+  function findBreakTagForGap(gap) {
+    const matches = findBreakTagsForGap(gap);
+    return matches.length ? matches[0].log : null;
   }
 
   // ---------- Topbar helpers ----------
@@ -1006,7 +994,6 @@
 
     const { start: dayStart } = todayBounds(new Date());
     assignDefaultSessionNamesForToday();
-    realignBreakLogsForToday();
 
     const now = Date.now();
     updateStreakUI(now);
@@ -1237,21 +1224,21 @@
     const accentMeta = TagColor.resolveAccentMeta(accentValue);
     renderTagList(tagsWorkUL, workData, accentMeta, true, state.tagSortWork);
 
-    // Break tags: collect duration and lastUsed per tag
+    // Break tags: map tags to current gaps for today
     const breakData = new Map(); // tag -> { ms, lastUsed }
-    for (const br of state.breakLogs) {
-      if (!br.tag) continue;
-      const a = Math.max(br.start, dayStart);
-      const b = Math.min(br.end, Math.min(nowMs, dayEnd));
-      const s = Math.max(0, b - a);
-      if (s > 0) {
-        const existing = breakData.get(br.tag);
-        if (existing) {
-          existing.ms += s;
-          if (br.end > existing.lastUsed) existing.lastUsed = br.end;
-        } else {
-          breakData.set(br.tag, { ms: s, lastUsed: br.end });
-        }
+    const breakSegs = segmentsForDay(dayStart, nowMs, state.sessions);
+    const gaps = gapsForDay(dayStart, breakSegs, nowMs);
+    for (const gap of gaps) {
+      const entry = findBreakTagForGap(gap);
+      if (!entry) continue;
+      const duration = Math.max(0, gap.endMs - gap.startMs);
+      if (!duration) continue;
+      const existing = breakData.get(entry.tag);
+      if (existing) {
+        existing.ms += duration;
+        if (gap.endMs > existing.lastUsed) existing.lastUsed = gap.endMs;
+      } else {
+        breakData.set(entry.tag, { ms: duration, lastUsed: gap.endMs });
       }
     }
     renderTagList(tagsBreakUL, breakData, accentMeta, false, state.tagSortBreak);
@@ -1325,8 +1312,8 @@
 
     for (let i = state.breakLogs.length - 1; i >= 0; i--) {
       const b = state.breakLogs[i];
-      const inToday = (b.tagTs != null ? (b.tagTs >= dayStart && b.tagTs < end)
-        : (b.start >= dayStart && b.start < end));
+      if (!b || typeof b.tagTs !== 'number') continue;
+      const inToday = (b.tagTs >= dayStart && b.tagTs < end);
       if (!inToday) continue;
 
       if ((b.tag || '').trim() === oldTag) {
