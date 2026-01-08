@@ -1,7 +1,10 @@
 (() => {
   'use strict';
 
-  const STORE_KEY = 'ot.v3.state';
+  const DateUtils = window.DateUtils;
+  const CakeStorage = window.CakeStorage;
+  const Streak = window.Streak;
+  const STORE_KEY = CakeStorage.STORE_KEY;
   const msPerSecond = 1000;
   const msPerMinute = 60 * msPerSecond;
   const msPerHour = 60 * msPerMinute;
@@ -9,79 +12,19 @@
   const tau = Math.PI * 2;
   const DEFAULT_ACCENT = TagColor.DEFAULT_ACCENT;
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const clientId = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
   const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
   const pad = (n) => String(n).padStart(2, '0');
   const escapeHtml = (str) => (str == null ? '' : String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
-  const normalizeTagKey = TagColor.normalizeTagKey;
-
-  const defaultState = {
-    sessions: [],
-    breakLogs: [],
-    goalMinutes: 240,
-    theme: 'light',
-    tagColors: {},
-    todos: [],
-    ignoredDays: [],
-    meta: { updatedAt: 0, clientId }
-  };
-
-  function normalizeMeta(meta) {
-    const updatedAt = typeof meta?.updatedAt === 'number' ? meta.updatedAt : 0;
-    const savedClientId = typeof meta?.clientId === 'string' ? meta.clientId : clientId;
-    return { updatedAt, clientId: savedClientId };
-  }
-
-  function hydrateState(raw) {
-    const base = { ...defaultState };
-    if (!raw || typeof raw !== 'object') return base;
-    const parsed = raw;
-    if (Array.isArray(parsed.sessions)) base.sessions = normalizeSessions(parsed.sessions);
-    if (Array.isArray(parsed.breakLogs)) base.breakLogs = normalizeBreakLogs(parsed.breakLogs);
-    if (typeof parsed.goalMinutes === 'number' && !Number.isNaN(parsed.goalMinutes)) {
-      base.goalMinutes = parsed.goalMinutes;
-    }
-    if (typeof parsed.theme === 'string') {
-      base.theme = parsed.theme === 'dark' ? 'dark' : 'light';
-    }
-    if (parsed.tagColors && typeof parsed.tagColors === 'object') {
-      base.tagColors = {};
-      for (const [rawKey, value] of Object.entries(parsed.tagColors)) {
-        const key = normalizeTagKey(rawKey);
-        if (!key) continue;
-        if (typeof value === 'string' && value.trim()) {
-          base.tagColors[key] = value.trim();
-        }
-      }
-    }
-    if (Array.isArray(parsed.todos)) base.todos = normalizeTodos(parsed.todos);
-    if (Array.isArray(parsed.ignoredDays)) {
-      base.ignoredDays = parsed.ignoredDays.filter(day => typeof day === 'string' && day.trim());
-    }
-    base.meta = normalizeMeta(parsed.meta);
-    return base;
-  }
-
-  let state = { ...defaultState };
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      state = hydrateState(JSON.parse(raw));
-    }
-  } catch (err) {
-    console.error('Unable to parse saved review data', err);
-  }
+  const dayEndFromStart = (dayStart) => DateUtils.addDays(dayStart, 1).getTime();
+  let state = CakeStorage.loadState();
+  state.sessions = normalizeSessions(state.sessions);
+  state.breakLogs = normalizeBreakLogs(state.breakLogs);
+  state.todos = normalizeTodos(state.todos);
 
   function saveState() {
-    try {
-      state.meta = normalizeMeta(state.meta);
-      state.meta.updatedAt = Date.now();
-      state.meta.clientId = clientId;
-      localStorage.setItem(STORE_KEY, JSON.stringify(state));
-    } catch (err) {
-      console.warn('Unable to save review data', err);
-    }
+    state.streak = Streak.computeStreak(state, Date.now(), Streak.MIN_SESSION_MS);
+    CakeStorage.saveState(state);
   }
   let accentMeta = TagColor.resolveAccentMeta(DEFAULT_ACCENT);
   let breakSwatchColor = '#9ca3af';
@@ -255,11 +198,12 @@
 
   function readStoredStateFromValue(rawValue) {
     if (!rawValue) return null;
-    try {
-      return hydrateState(JSON.parse(rawValue));
-    } catch {
-      return null;
-    }
+    const incoming = CakeStorage.readStateFromValue(rawValue);
+    if (!incoming) return null;
+    incoming.sessions = normalizeSessions(incoming.sessions);
+    incoming.breakLogs = normalizeBreakLogs(incoming.breakLogs);
+    incoming.todos = normalizeTodos(incoming.todos);
+    return incoming;
   }
 
   function syncFromStorageValue(rawValue) {
@@ -336,7 +280,7 @@
   }
 
   function deleteDay(dayStart) {
-    const dayEnd = dayStart + msPerDay;
+    const dayEnd = dayEndFromStart(dayStart);
     const nowMs = Date.now();
 
     const nextSessions = [];
@@ -464,8 +408,8 @@
     });
     if (!Number.isFinite(earliest)) earliest = nowMs;
 
-    const firstDayStart = startOfDayMs(earliest);
-    const lastDayStart = startOfDayMs(nowMs);
+    const firstDay = DateUtils.startOfDay(earliest);
+    const lastDay = DateUtils.startOfDay(nowMs);
     const goalMs = Number.isFinite(state.goalMinutes) ? Math.max(0, state.goalMinutes) * msPerMinute : 0;
     const ignoredSet = new Set(Array.isArray(state.ignoredDays) ? state.ignoredDays : []);
 
@@ -487,24 +431,25 @@
     let firstActiveDate = null;
     let lastActiveDate = null;
 
-    for (let dayStart = firstDayStart; dayStart <= lastDayStart; dayStart += msPerDay) {
+    for (let day = new Date(firstDay); day <= lastDay; day = DateUtils.addDays(day, 1)) {
+      const dayStart = day.getTime();
       const dayStr = ymdFromMs(dayStart);
       const ignored = ignoredSet.has(dayStr);
-      const day = buildDay(dayStart, nowMs, goalMs, ignored, dayStr);
-      if (!day) continue;
+      const dayData = buildDay(dayStart, nowMs, goalMs, ignored, dayStr);
+      if (!dayData) continue;
 
-      dailyData.push(day);
-      if (!firstActiveDate) firstActiveDate = day.date;
-      lastActiveDate = day.date;
+      dailyData.push(dayData);
+      if (!firstActiveDate) firstActiveDate = dayData.date;
+      lastActiveDate = dayData.date;
 
-      const weekKey = startOfWeekMs(day.dayStart);
+      const weekKey = startOfWeekMs(dayData.dayStart);
       let week = weeklyMap.get(weekKey);
       if (!week) {
         const startDate = new Date(weekKey);
         const { week: isoWeek, year: isoYear } = getISOWeek(startDate);
         week = {
           startMs: weekKey,
-          endMs: weekKey + 6 * msPerDay,
+          endMs: DateUtils.addDays(weekKey, 6).getTime(),
           isoWeek,
           isoYear,
           workMs: 0,
@@ -518,9 +463,9 @@
         };
         weeklyMap.set(weekKey, week);
       }
-      week.dayRefs.push(day);
+      week.dayRefs.push(dayData);
 
-      const monthKey = monthKeyFromDay(day.dayStart);
+      const monthKey = monthKeyFromDay(dayData.dayStart);
       let month = monthlyMap.get(monthKey);
       if (!month) {
         const date = new Date(day.dayStart);
@@ -541,37 +486,37 @@
         monthlyMap.set(monthKey, month);
       }
 
-      if (!day.ignored) {
-        totalWorkMs += day.workMs;
-        totalBreakMs += day.breakMs;
-        totalTaggedBreakMs += day.taggedBreakMs;
-        totalSessions += day.sessionCount;
+      if (!dayData.ignored) {
+        totalWorkMs += dayData.workMs;
+        totalBreakMs += dayData.breakMs;
+        totalTaggedBreakMs += dayData.taggedBreakMs;
+        totalSessions += dayData.sessionCount;
         activeDays += 1;
-        if (day.goalMet) goalHits += 1;
-        if (day.workMs > longestDay.ms) longestDay = { ms: day.workMs, date: day.date };
-        if (day.longestSessionMs > longestSession.ms) {
-          longestSession = { ms: day.longestSessionMs, date: day.date, tag: day.longestSessionTag };
+        if (dayData.goalMet) goalHits += 1;
+        if (dayData.workMs > longestDay.ms) longestDay = { ms: dayData.workMs, date: dayData.date };
+        if (dayData.longestSessionMs > longestSession.ms) {
+          longestSession = { ms: dayData.longestSessionMs, date: dayData.date, tag: dayData.longestSessionTag };
         }
-        day.tagDurations.forEach((ms, tag) => {
+        dayData.tagDurations.forEach((ms, tag) => {
           tagTotals.set(tag, (tagTotals.get(tag) || 0) + ms);
         });
-        day.breakTagDurations.forEach((ms, tag) => {
+        dayData.breakTagDurations.forEach((ms, tag) => {
           breakTagTotals.set(tag, (breakTagTotals.get(tag) || 0) + ms);
         });
-        totalTodosCompleted += day.todosCompleted.length;
-        week.workMs += day.workMs;
-        week.breakMs += day.breakMs;
-        week.sessionCount += day.sessionCount;
+        totalTodosCompleted += dayData.todosCompleted.length;
+        week.workMs += dayData.workMs;
+        week.breakMs += dayData.breakMs;
+        week.sessionCount += dayData.sessionCount;
         week.activeDays += 1;
-        if (day.goalMet) week.goalHits += 1;
-        mergeDurationMap(week.tagDurations, day.tagDurations);
-        mergeDurationMap(week.breakTagDurations, day.breakTagDurations);
-        month.workMs += day.workMs;
-        month.breakMs += day.breakMs;
-        month.sessionCount += day.sessionCount;
+        if (dayData.goalMet) week.goalHits += 1;
+        mergeDurationMap(week.tagDurations, dayData.tagDurations);
+        mergeDurationMap(week.breakTagDurations, dayData.breakTagDurations);
+        month.workMs += dayData.workMs;
+        month.breakMs += dayData.breakMs;
+        month.sessionCount += dayData.sessionCount;
         month.activeDays += 1;
-        mergeDurationMap(month.tagDurations, day.tagDurations);
-        mergeDurationMap(month.breakTagDurations, day.breakTagDurations);
+        mergeDurationMap(month.tagDurations, dayData.tagDurations);
+        mergeDurationMap(month.breakTagDurations, dayData.breakTagDurations);
       }
     }
 
@@ -621,7 +566,8 @@
   }
 
   function buildDay(dayStart, nowMs, goalMs, ignored, dayStr) {
-    const daySessions = sessionsForDay(dayStart, nowMs);
+    const dayEnd = dayEndFromStart(dayStart);
+    const daySessions = sessionsForDay(dayStart, dayEnd, nowMs);
     if (!daySessions.length) return null;
 
     const workMs = daySessions.reduce((sum, sess) => sum + (sess.end - sess.start), 0);
@@ -651,8 +597,8 @@
     const breakSegments = gapsBetweenSessions(daySessions);
     const breakMs = breakSegments.reduce((sum, gap) => sum + (gap.end - gap.start), 0);
 
-    const breakTagDurations = breakTagsForDay(dayStart, nowMs);
-    const todosCompleted = completedTodosForDay(dayStart, dayStart + msPerDay);
+    const breakTagDurations = breakTagsForDay(dayStart, dayEnd, nowMs);
+    const todosCompleted = completedTodosForDay(dayStart, dayEnd);
     let taggedBreakMs = 0;
     breakTagDurations.forEach((ms) => {
       taggedBreakMs += ms;
@@ -679,8 +625,7 @@
     };
   }
 
-  function sessionsForDay(dayStart, nowMs) {
-    const dayEnd = dayStart + msPerDay;
+  function sessionsForDay(dayStart, dayEnd, nowMs) {
     const result = [];
     for (const session of state.sessions) {
       if (!session || typeof session.start !== 'number') continue;
@@ -712,10 +657,9 @@
     return gaps;
   }
 
-  function breakTagsForDay(dayStart, nowMs) {
+  function breakTagsForDay(dayStart, dayEnd, nowMs) {
     const result = new Map();
     if (!state.breakLogs.length) return result;
-    const dayEnd = dayStart + msPerDay;
     for (const log of state.breakLogs) {
       if (!log || typeof log.start !== 'number' || typeof log.end !== 'number') continue;
       if (log.end <= dayStart || log.start >= dayEnd) continue;
@@ -828,11 +772,12 @@
     const todayDayOfWeek = nowDate.getDay(); // 0 = Sunday
     // Convert to Monday-based: Mon=0, Tue=1, ..., Sun=6
     const mondayBasedDay = (todayDayOfWeek + 6) % 7;
-    const endDayStart = startOfDayMs(now);
+    const endDayDate = DateUtils.startOfDay(nowDate);
+    const endDayStart = endDayDate.getTime();
 
     // Go back to find the Monday that starts 52 weeks ago
     const weeksBack = 52;
-    const startMonday = new Date(endDayStart);
+    const startMonday = new Date(endDayDate);
     startMonday.setDate(startMonday.getDate() - (weeksBack * 7) - mondayBasedDay);
     const startMs = startMonday.getTime();
 
@@ -861,31 +806,32 @@
 
     // Build week columns
     const columns = [];
-    let currentDay = startMs;
+    let currentDay = new Date(startMs);
     let workingDays = 0;
 
-    while (currentDay <= endDayStart) {
+    while (currentDay.getTime() <= endDayStart) {
       const weekColumn = [];
-      const weekStartMs = currentDay;
+      const weekStartMs = currentDay.getTime();
 
       for (let dayOfWeek = 0; dayOfWeek < 7; dayOfWeek++) {
-        if (currentDay > endDayStart) {
+        const currentMs = currentDay.getTime();
+        if (currentMs > endDayStart) {
           // Future day placeholder (shouldn't render)
           weekColumn.push(null);
         } else {
-          const workMs = workByDay.get(currentDay) || 0;
+          const workMs = workByDay.get(currentMs) || 0;
           if (workMs > 0) workingDays++;
           const level = getLevel(workMs);
-          const date = new Date(currentDay);
+          const date = new Date(currentMs);
           weekColumn.push({
             date,
-            dayStart: currentDay,
+            dayStart: currentMs,
             workMs,
             level,
             tooltip: `${date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}: ${formatDuration(workMs)}`
           });
         }
-        currentDay += msPerDay;
+        currentDay = DateUtils.addDays(currentDay, 1);
       }
 
       columns.push({ weekStartMs, days: weekColumn });
@@ -1455,8 +1401,7 @@
   }
 
   function ymdFromMs(ms) {
-    const d = new Date(ms);
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    return DateUtils.dayKey(ms);
   }
 
   function formatRangeShort(startMs, endMs) {
@@ -1493,19 +1438,8 @@
     return breakSwatchColor;
   }
 
-  function startOfDayMs(timestamp) {
-    const d = new Date(timestamp);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
-  }
-
   function startOfWeekMs(dayStartMs) {
-    const d = new Date(dayStartMs);
-    const day = d.getDay(); // 0 (Sun) .. 6 (Sat)
-    const diff = day === 0 ? -6 : 1 - day; // Monday as start
-    d.setDate(d.getDate() + diff);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
+    return DateUtils.startOfWeek(dayStartMs).getTime();
   }
 
   function monthKeyFromDay(dayStart) {

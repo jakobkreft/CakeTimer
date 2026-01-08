@@ -7,8 +7,11 @@
   const msPerMinute = 60 * msPerSecond;
   const msPerHour = 60 * msPerMinute;
   const msPerDay = 24 * msPerHour;
+  const DateUtils = window.DateUtils;
+  const CakeStorage = window.CakeStorage;
+  const Streak = window.Streak;
 
-  const MIN_SESSION_MS = 15000;
+  const MIN_SESSION_MS = Streak.MIN_SESSION_MS;
   const DELETE_THRESH_MS = 5000;
   const DRAG_PX = 6;
   const DRAG_MIN_MS = 1000;
@@ -35,14 +38,11 @@
   };
   const fmtClockS = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const ymd = (d) => DateUtils.dayKey(d);
 
-  const todayBounds = (d = new Date()) => {
-    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    return { start, end: start + msPerDay };
-  };
+  const todayBounds = (d = new Date()) => DateUtils.boundsForDay(d);
+  const dayEndFromStart = (dayStart) => DateUtils.addDays(dayStart, 1).getTime();
   const effectiveEnd = (session, nowMs = Date.now()) => (session.end == null ? nowMs : session.end);
-  const clientId = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
   // ---------- Color utilities ----------
   const DEFAULT_ACCENT = TagColor.DEFAULT_ACCENT;
@@ -87,88 +87,22 @@
   }
 
   // ---------- Storage ----------
-  const STORE_KEY = 'ot.v3.state';
+  const STORE_KEY = CakeStorage.STORE_KEY;
   const SORT_ORDER = ['time-desc', 'time-asc', 'recent-desc', 'recent-asc'];
-
-  function normalizeMeta(meta) {
-    const updatedAt = typeof meta?.updatedAt === 'number' ? meta.updatedAt : 0;
-    const savedClientId = typeof meta?.clientId === 'string' ? meta.clientId : clientId;
-    return { updatedAt, clientId: savedClientId };
-  }
-
-  function defaultState() {
-    return {
-      version: 4,
-      sessions: [],
-      breakLogs: [],
-      goalMinutes: 240,
-      theme: 'light',
-      streak: { current: 0, best: 0, lastDay: null },
-      badges: [],
-      tagColors: {},
-      todos: [],
-      ignoredDays: [],
-      meta: normalizeMeta(),
-      tagSortWork: 'time-desc',
-      tagSortBreak: 'time-desc'
-    };
-  }
-
-  function hydrateState(raw) {
-    let base = defaultState();
-    if (!raw || typeof raw !== 'object') return base;
-    const s = raw;
-    base.sessions = Array.isArray(s.sessions) ? s.sessions : [];
-    base.goalMinutes = typeof s.goalMinutes === 'number' ? s.goalMinutes : base.goalMinutes;
-    base.theme = (s.theme === 'dark' ? 'dark' : 'light');
-    base.breakLogs = Array.isArray(s.breakLogs) ? s.breakLogs : [];
-    for (const b of base.breakLogs) { if (typeof b.tagTs !== 'number') b.tagTs = Math.round((b.start + b.end) / 2); }
-    base.streak = s.streak && typeof s.streak === 'object' ? s.streak : base.streak;
-    base.badges = Array.isArray(s.badges) ? s.badges : [];
-    if (s.tagColors && typeof s.tagColors === 'object') {
-      base.tagColors = {};
-      for (const [k, v] of Object.entries(s.tagColors)) {
-        if (typeof v !== 'string' || !v) continue;
-        const nk = normalizeTagKey(k);
-        if (nk) base.tagColors[nk] = v;
-      }
-    }
-    base.todos = Array.isArray(s.todos) ? s.todos : [];
-    if (Array.isArray(s.ignoredDays)) {
-      base.ignoredDays = s.ignoredDays.filter(day => typeof day === 'string' && day.trim());
-    }
-    if (SORT_ORDER.includes(s.tagSortWork)) base.tagSortWork = s.tagSortWork;
-    if (SORT_ORDER.includes(s.tagSortBreak)) base.tagSortBreak = s.tagSortBreak;
-    base.meta = normalizeMeta(s.meta);
-    base.version = 4;
-    return base;
-  }
+  const defaultState = CakeStorage.defaultState;
+  const normalizeMeta = CakeStorage.normalizeMeta;
 
   function loadState() {
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (!raw) return defaultState();
-      const s = JSON.parse(raw);
-      return hydrateState(s);
-    } catch { }
-    return defaultState();
+    return CakeStorage.loadState();
   }
+
   function readStoredStateFromValue(rawValue) {
-    if (!rawValue) return null;
-    try {
-      return hydrateState(JSON.parse(rawValue));
-    } catch {
-      return null;
-    }
+    return CakeStorage.readStateFromValue(rawValue);
   }
 
   function saveState() {
-    try {
-      state.meta = normalizeMeta(state.meta);
-      state.meta.updatedAt = Date.now();
-      state.meta.clientId = clientId;
-      localStorage.setItem(STORE_KEY, JSON.stringify(state));
-    } catch { }
+    state.streak = Streak.computeStreak(state, Date.now(), MIN_SESSION_MS);
+    CakeStorage.saveState(state);
   }
 
   // ---------- State & elements ----------
@@ -233,9 +167,15 @@
     if (e.key !== STORE_KEY) return;
     syncFromStorageValue(e.newValue);
   });
-  window.addEventListener('focus', syncFromStorage);
+  window.addEventListener('focus', () => {
+    syncFromStorage();
+    updateStreakUI();
+  });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') syncFromStorage();
+    if (document.visibilityState === 'visible') {
+      syncFromStorage();
+      updateStreakUI();
+    }
   });
 
   // Side controls
@@ -490,24 +430,13 @@
     } catch { }
   }
 
-  // ---------- First-open-of-day streak handling ----------
-  (function handleDailyStreak() {
-    const today = ymd(new Date());
-    const last = state.streak.lastDay;
-    if (last !== today) {
-      if (last) {
-        const lastDate = new Date(last);
-        const diff = Math.round((todayBounds().start - todayBounds(lastDate).start) / msPerDay);
-        state.streak.current = (diff === 1) ? (state.streak.current || 0) + 1 : 1;
-      } else {
-        state.streak.current = 1;
-      }
-      state.streak.best = Math.max(state.streak.best || 0, state.streak.current);
-      state.streak.lastDay = today;
-      saveState();
-    }
-    updateStreakUI();
-  })();
+  function updateStreakUI(nowMs = Date.now()) {
+    const now = typeof nowMs === 'number' ? nowMs : new Date(nowMs).getTime();
+    const streak = Streak.computeStreak(state, now, MIN_SESSION_MS);
+    state.streak = streak;
+    streakLine.textContent = `STREAK: ${streak.current || 0} • BEST: ${streak.best || 0}`;
+  }
+  updateStreakUI();
 
   // ---------- Welcome prompt (shown until work starts today) ----------
   function updateWelcome() {
@@ -525,10 +454,6 @@
     welcomeEl.hidden = false;
   }
   updateWelcome();
-
-  function updateStreakUI() {
-    streakLine.textContent = `STREAK: ${state.streak.current || 0} • BEST: ${state.streak.best || 0}`;
-  }
 
   // ---------- Session helpers ----------
   function isRunning() { const last = state.sessions[state.sessions.length - 1]; return !!(last && last.end == null); }
@@ -553,6 +478,7 @@
     }
     realignBreakLogsForToday();
     saveState();
+    updateStreakUI();
     announce('Stopped'); requestDraw(); updateTagsPanel(); updateWelcome();
   }
 
@@ -621,7 +547,7 @@
 
   // ---------- Build today's raw segments ----------
   function segmentsForDay(dayStart, nowMs = Date.now(), sessions = state.sessions) {
-    const dayEnd = dayStart + msPerDay;
+    const dayEnd = dayEndFromStart(dayStart);
     const segs = [];
     sessions.forEach((sess, i) => {
       const s = sess.start, e = effectiveEnd(sess, nowMs);
@@ -634,7 +560,7 @@
   }
   function gapsForDay(dayStart, segs) {
     const nowMs = Date.now();
-    const dayEnd = dayStart + msPerDay;
+    const dayEnd = dayEndFromStart(dayStart);
     const clampEnd = Math.min(nowMs, dayEnd);
     const gaps = [];
     let cursor = dayStart;
@@ -650,10 +576,11 @@
   // ---------- Default session names (today) ----------
   function assignDefaultSessionNamesForToday() {
     const { start: dayStart } = todayBounds(new Date());
+    const dayEnd = dayEndFromStart(dayStart);
     const nowMs = Date.now();
     const todaySessions = state.sessions
       .map((s, i) => ({ s, i }))
-      .filter(x => effectiveEnd(x.s, nowMs) > dayStart && x.s.start < dayStart + msPerDay)
+      .filter(x => effectiveEnd(x.s, nowMs) > dayStart && x.s.start < dayEnd)
       .sort((a, b) => (Math.max(a.s.start, dayStart) - Math.max(b.s.start, dayStart)));
 
     const re = /^Session\s+(\d+)\b/i;
@@ -680,6 +607,7 @@
   // ---------- Break logs realignment ----------
   function realignBreakLogsForToday() {
     const { start: dayStart } = todayBounds(new Date());
+    const dayEnd = dayEndFromStart(dayStart);
     const segs = segmentsForDay(dayStart, Date.now(), state.sessions);
     const gaps = gapsForDay(dayStart, segs);
 
@@ -687,7 +615,7 @@
     for (let i = state.breakLogs.length - 1; i >= 0; i--) {
       const b = state.breakLogs[i];
       if (typeof b.tagTs !== 'number') b.tagTs = Math.round((b.start + b.end) / 2);
-      if (b.tagTs < dayStart || b.tagTs > Math.min(Date.now(), dayStart + msPerDay)) continue;
+      if (b.tagTs < dayStart || b.tagTs > Math.min(Date.now(), dayEnd)) continue;
 
       const gap = gaps.find(g => b.tagTs >= g.startMs && b.tagTs <= g.endMs);
       if (gap) {
@@ -703,7 +631,7 @@
   }
 
   function preciseWorkedSeconds(dayStart) {
-    const dayEnd = dayStart + msPerDay;
+    const dayEnd = dayEndFromStart(dayStart);
     let total = 0; const nowMs = Date.now();
     for (const sess of state.sessions) {
       const s = sess.start, e = effectiveEnd(sess, nowMs);
@@ -756,7 +684,7 @@
 
   function cappedEdgeTime(segIndex, edge, desiredTime, dayStart) {
     const nowMs = Date.now();
-    const dayEnd = dayStart + msPerDay;
+    const dayEnd = dayEndFromStart(dayStart);
     const segs = segmentsForDay(dayStart, nowMs, getSessionsForCalc());
     const seg = segs[segIndex];
     if (!seg) return desiredTime;
@@ -775,7 +703,7 @@
   }
 
   function deleteTodaysSlice(sessionIndex, dayStart) {
-    const dayEnd = dayStart + msPerDay;
+    const dayEnd = dayEndFromStart(dayStart);
     const sess = state.sessions[sessionIndex]; if (!sess) return;
     const nowMs = Date.now();
     const s = sess.start, e = effectiveEnd(sess, nowMs);
@@ -795,7 +723,7 @@
       drag.curStart = clamp(capped, drag.dayStart, maxStart);
     } else {
       const minEnd = (drag.curStart + DRAG_MIN_MS);
-      const dayEnd = drag.dayStart + msPerDay;
+      const dayEnd = dayEndFromStart(drag.dayStart);
       drag.curEnd = clamp(capped, minEnd, Math.min(dayEnd, nowMs));
     }
     requestDraw();
@@ -852,7 +780,7 @@
         tip.innerHTML = `<b>SESSION</b><br>${fmtTime(sTime)} → ${fmtTime(eTime)}<br>${Math.floor(mins / 60)}h ${mins % 60}m ${secs}s<br>TAG: ${escapeHtml(tagStr)}<br><small>Press <b>T</b> to rename<br>Drag edge to adjust</small>`;
       } else {
         const t = timeFromAngle(res.theta, dayStart);
-        const dayEnd = dayStart + msPerDay;
+        const dayEnd = dayEndFromStart(dayStart);
         if (t >= dayStart && t <= Math.min(nowMs, dayEnd)) {
           const gaps = gapsForDay(dayStart, res.segs);
           const gap = gaps.find(g => t >= g.startMs && t <= g.endMs);
@@ -966,6 +894,7 @@
   function attemptTagAtHover() {
     const { start: dayStart } = todayBounds(new Date());
     const nowMs = Date.now();
+    const dayEnd = dayEndFromStart(dayStart);
     const segs = segmentsForDay(dayStart, nowMs, getSessionsForCalc());
 
     if (hover.segIndex >= 0) {
@@ -983,7 +912,7 @@
     } else {
       const theta = hover.theta;
       const t = timeFromAngle(theta, dayStart);
-      if (t < dayStart || t > Math.min(nowMs, dayStart + msPerDay)) return;
+      if (t < dayStart || t > Math.min(nowMs, dayEnd)) return;
       const gaps = gapsForDay(dayStart, segs);
       const gap = gaps.find(g => t >= g.startMs && t <= g.endMs);
       if (!gap) return;
@@ -1020,7 +949,7 @@
     const now = Date.now();
     let lastStop = dayStart;
     for (const s of state.sessions) {
-      if (s.end != null && s.end <= now && s.end >= dayStart && s.end <= dayStart + msPerDay) {
+      if (s.end != null && s.end <= now && s.end >= dayStart && s.end <= dayEndFromStart(dayStart)) {
         if (s.end > lastStop) lastStop = s.end;
       }
     }
@@ -1080,6 +1009,7 @@
     realignBreakLogsForToday();
 
     const now = Date.now();
+    updateStreakUI(now);
     const nowTheta = ((now - dayStart) / msPerDay) * (Math.PI * 2) - Math.PI / 2;
     const progressD = slicePath(-Math.PI / 2, nowTheta);
     if (progressD) {
@@ -1190,13 +1120,14 @@
 
   function scheduleMidnightSave() {
     const now = Date.now();
-    const { end } = todayBounds(new Date());
-    const delay = Math.max(1000, end - now + 2000);
+    const nextMidnight = DateUtils.addDays(now, 1).getTime();
+    const delay = Math.max(1000, nextMidnight - now + 1000);
     setTimeout(() => {
       // New day: remove yesterday's completed todos from state
       const { start: freshStart } = todayBounds(new Date());
       pruneOldCompletedTodos(freshStart);
-      saveState();
+      updateStreakUI();
+      updateWelcome();
       renderTodos();
       scheduleMidnightSave();
     }, delay);
@@ -1216,8 +1147,9 @@
       if (eligible.has('solid-hour') && eligible.has('deep-work')) break;
     }
 
+    const dayEnd = dayEndFromStart(dayStart);
     const firstToday = state.sessions
-      .filter(s => s.start >= dayStart && s.start < dayStart + msPerDay)
+      .filter(s => s.start >= dayStart && s.start < dayEnd)
       .sort((a, b) => a.start - b.start)[0];
     if (firstToday && (firstToday.start - dayStart) < EARLY_BIRD_MS) {
       eligible.add('early-bird');
@@ -1281,7 +1213,7 @@
   function updateTagsPanel() {
     const { start: dayStart } = todayBounds(new Date());
     const nowMs = Date.now();
-    const dayEnd = dayStart + msPerDay;
+    const dayEnd = dayEndFromStart(dayStart);
 
     // Work tags: collect duration and lastUsed per tag
     const workData = new Map(); // tag -> { ms, lastUsed }
@@ -1422,7 +1354,8 @@
     // Keep incomplete todos always.
     // Keep completed todos only if completed today.
     const before = state.todos.length;
-    state.todos = state.todos.filter(t => !t.done || (t.completedAt != null && t.completedAt >= dayStart && t.completedAt < dayStart + msPerDay));
+    const dayEnd = dayEndFromStart(dayStart);
+    state.todos = state.todos.filter(t => !t.done || (t.completedAt != null && t.completedAt >= dayStart && t.completedAt < dayEnd));
     if (state.todos.length !== before) saveState();
   }
 
@@ -1446,9 +1379,10 @@
 
   function renderTodos() {
     const { start: dayStart } = todayBounds(new Date());
+    const dayEnd = dayEndFromStart(dayStart);
 
     const view = state.todos.filter(t =>
-      !t.done || (t.completedAt != null && t.completedAt >= dayStart && t.completedAt < dayStart + msPerDay)
+      !t.done || (t.completedAt != null && t.completedAt >= dayStart && t.completedAt < dayEnd)
     );
 
     // Sort: incomplete first (by created), then completed (by completedAt asc)
