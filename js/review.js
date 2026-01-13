@@ -411,7 +411,6 @@
 
     let totalWorkMs = 0;
     let totalBreakMs = 0;
-    let totalTaggedBreakMs = 0;
     let totalTodosCompleted = 0;
     let totalSessions = 0;
     let activeDays = 0;
@@ -479,7 +478,6 @@
       if (!dayData.ignored) {
         totalWorkMs += dayData.workMs;
         totalBreakMs += dayData.breakMs;
-        totalTaggedBreakMs += dayData.taggedBreakMs;
         totalSessions += dayData.sessionCount;
         activeDays += 1;
         if (dayData.goalMet) goalHits += 1;
@@ -524,12 +522,13 @@
       share: totalWorkMs > 0 ? ms / totalWorkMs : 0
     })).sort((a, b) => b.ms - a.ms);
 
+    const totalBreakTagMs = Array.from(breakTagTotals.values()).reduce((sum, ms) => sum + ms, 0);
     const breakTagTotalsArray = Array.from(breakTagTotals.entries()).map(([tag, ms]) => ({
       tag,
       display: formatTagLabel(tag),
       ms,
       color: colorForBreakTag(tag),
-      share: totalTaggedBreakMs > 0 ? ms / totalTaggedBreakMs : 0
+      share: totalBreakTagMs > 0 ? ms / totalBreakTagMs : 0
     })).sort((a, b) => b.ms - a.ms);
 
     return {
@@ -541,7 +540,6 @@
       totals: {
         workMs: totalWorkMs,
         breakMs: totalBreakMs,
-        taggedBreakMs: totalTaggedBreakMs,
         todosCompleted: totalTodosCompleted,
         sessions: totalSessions,
         activeDays,
@@ -589,10 +587,6 @@
 
     const breakTagDurations = breakTagsForDay(breakSegments);
     const todosCompleted = completedTodosForDay(dayStart, dayEnd);
-    let taggedBreakMs = 0;
-    breakTagDurations.forEach((ms) => {
-      taggedBreakMs += ms;
-    });
 
     return {
       dayStart,
@@ -601,7 +595,6 @@
       ignored: !!ignored,
       workMs,
       breakMs,
-      taggedBreakMs,
       sessionCount: daySessions.length,
       longestSessionMs,
       longestSessionTag,
@@ -981,9 +974,9 @@
     metrics.appendChild(metricRow('Sessions', String(day.sessionCount)));
     const longestValue = day.longestSessionMs ? `${formatDuration(day.longestSessionMs)}${day.longestSessionTag ? ` • ${formatTagLabel(day.longestSessionTag)}` : ''}` : '—';
     metrics.appendChild(metricRow('Longest', longestValue));
-    const breaksValue = day.breakMs ? `${formatDuration(day.breakMs)}${day.taggedBreakMs ? ` (${formatDuration(day.taggedBreakMs)} tagged)` : ''}` : '—';
-    metrics.appendChild(metricRow('Breaks', breaksValue));
-    metrics.appendChild(metricRow('Window', `${formatTime(day.firstStart)} → ${formatTime(day.lastEnd)}`));
+    const windowMs = Math.max(0, day.lastEnd - day.firstStart);
+    const windowLabel = `${formatTime(day.firstStart)} → ${formatTime(day.lastEnd)}<br>(${formatDuration(windowMs)})`;
+    metrics.appendChild(metricRow('Window', windowLabel, null, true));
     const todosLabel = day.todosCompleted.length ? `${day.todosCompleted.length} ${plural(day.todosCompleted.length, 'todo')}` : '0';
     metrics.appendChild(metricRow('Todos done', todosLabel));
     metrics.appendChild(metricRow('Goal', day.goalMet ? 'Hit' : 'Missed', day.goalMet ? ['goal-chip', 'hit'] : ['goal-chip', 'miss']));
@@ -1010,7 +1003,7 @@
       card.appendChild(block);
     }
 
-    const breakEntries = getBreakEntries(day.breakTagDurations, day.taggedBreakMs);
+    const breakEntries = getBreakEntries(day.breakTagDurations);
     if (breakEntries.length) {
       const block = document.createElement('div');
       block.className = 'break-breakdown';
@@ -1062,7 +1055,7 @@
     return card;
   }
 
-  function metricRow(label, value, valueClass) {
+  function metricRow(label, value, valueClass, valueIsHtml = false) {
     const row = document.createElement('div');
     row.className = 'metric-row';
     const labelSpan = document.createElement('span');
@@ -1076,7 +1069,11 @@
         : String(valueClass).trim().split(/\s+/);
       classes.filter(Boolean).forEach((cls) => valueSpan.classList.add(cls));
     }
-    valueSpan.textContent = value;
+    if (valueIsHtml) {
+      valueSpan.innerHTML = value;
+    } else {
+      valueSpan.textContent = value;
+    }
     row.appendChild(labelSpan);
     row.appendChild(valueSpan);
     return row;
@@ -1292,7 +1289,7 @@
 
     const summary = document.createElement('div');
     summary.className = 'stat-summary';
-    summary.textContent = `Breaks (all gaps): ${formatDuration(data.totals.breakMs)} (${formatDuration(data.totals.taggedBreakMs)} tagged)`;
+    summary.textContent = `Breaks (all gaps): ${formatDuration(data.totals.breakMs)}`;
     breakStatsRoot.appendChild(summary);
 
     if (!data.breakTagTotalsArray.length) {
@@ -1342,7 +1339,8 @@
     return entries;
   }
 
-  function getBreakEntries(map, totalMs) {
+  function getBreakEntries(map) {
+    const totalMs = Array.from(map.values()).reduce((sum, ms) => sum + ms, 0);
     const entries = [];
     map.forEach((ms, tag) => {
       if (ms <= 0) return;
