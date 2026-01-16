@@ -195,6 +195,12 @@ button {
 
 .goal-label {
   margin-right: 12px;
+  cursor: pointer;
+}
+
+.goal-label:focus-visible {
+  outline: var(--line) solid var(--border);
+  outline-offset: 2px;
 }
 
 .status {

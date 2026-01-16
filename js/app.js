@@ -40,6 +40,30 @@
   const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   const ymd = (d) => DateUtils.dayKey(d);
 
+  function parseGoalInput(value) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const hmMatch = trimmed.match(/^(\d{1,2})\s*h\s+(\d{1,2})\s*m$/i);
+    if (hmMatch) {
+      const hours = Number(hmMatch[1]);
+      const minutes = Number(hmMatch[2]);
+      if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+      if (hours < 0 || hours > 24 || minutes < 0 || minutes > 59) return null;
+      if (hours === 24 && minutes !== 0) return null;
+      return hours * 60 + minutes;
+    }
+    const clockMatch = trimmed.match(/^(\d{1,2}):([0-5]\d)$/);
+    if (clockMatch) {
+      const hours = Number(clockMatch[1]);
+      const minutes = Number(clockMatch[2]);
+      if (!Number.isInteger(hours) || hours < 0 || hours > 24) return null;
+      if (hours === 24 && minutes !== 0) return null;
+      return hours * 60 + minutes;
+    }
+    return null;
+  }
+
   const todayBounds = (d = new Date()) => DateUtils.boundsForDay(d);
   const dayEndFromStart = (dayStart) => DateUtils.addDays(dayStart, 1).getTime();
   const effectiveEnd = (session, nowMs = Date.now()) => (session.end == null ? nowMs : session.end);
@@ -181,6 +205,7 @@
   // Side controls
   const toggleBtn = document.getElementById('toggleBtn');
   const goalText = document.getElementById('goalText');
+  const goalLabel = document.querySelector('.goal-label');
   const goalMinus = document.getElementById('goalMinus');
   const goalPlus = document.getElementById('goalPlus');
 
@@ -481,6 +506,19 @@
   }
 
   function setGoal(mins) { state.goalMinutes = clamp(Math.round(mins), 0, 24 * 60); saveState(); requestDraw(); }
+  function promptGoal() {
+    const initial = fmtHM(state.goalMinutes);
+    while (true) {
+      const input = prompt('Set daily goal (Xh Ym or H:MM):', initial);
+      if (input === null) return;
+      const parsed = parseGoalInput(input);
+      if (parsed != null) {
+        setGoal(parsed);
+        return;
+      }
+      alert('Invalid goal. Use "4h 30m" or "4:30" (hours 0-24, minutes 00-59).');
+    }
+  }
   function toggleTheme() {
     state.theme = (state.theme === 'dark') ? 'light' : 'dark';
     applyTheme();
@@ -704,6 +742,18 @@
   themeBtn.addEventListener('click', toggleTheme);
   goalMinus.addEventListener('click', () => setGoal(state.goalMinutes - 30));
   goalPlus.addEventListener('click', () => setGoal(state.goalMinutes + 30));
+  if (goalLabel) {
+    goalLabel.setAttribute('tabindex', '0');
+    goalLabel.setAttribute('role', 'button');
+    goalLabel.setAttribute('title', 'Click to set exact goal');
+    goalLabel.addEventListener('click', promptGoal);
+    goalLabel.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        promptGoal();
+      }
+    });
+  }
 
   // Both Start/Stop buttons behave the same
   function toggleTimer() { isRunning() ? stopSession() : startSession(); }
