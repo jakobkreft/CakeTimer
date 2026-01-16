@@ -151,6 +151,9 @@
   const progressPath = createSvgElement('path');
   progressPath.setAttribute('pointer-events', 'none');
 
+  const futurePath = createSvgElement('path');
+  futurePath.setAttribute('pointer-events', 'none');
+
   const workGroup = createSvgElement('g');
   workGroup.setAttribute('pointer-events', 'none');
   workGroup.setAttribute('fill', 'none');
@@ -183,6 +186,7 @@
 
   dial.appendChild(baseCircle);
   dial.appendChild(progressPath);
+  dial.appendChild(futurePath);
   dial.appendChild(workGroup);
   dial.appendChild(hourGroup);
   dial.appendChild(textGroup);
@@ -549,6 +553,13 @@
   const statusEl = document.getElementById('status');
   function announce(msg) { statusEl.textContent = msg; }
 
+  let goalHover = false;
+  function setGoalHover(next) {
+    if (goalHover === next) return;
+    goalHover = next;
+    requestDraw();
+  }
+
   // ---------- Geometry ----------
   const tau2 = Math.PI * 2;
   function polarToCartesian(cx, cy, r, angle) {
@@ -747,6 +758,10 @@
     goalLabel.setAttribute('role', 'button');
     goalLabel.setAttribute('title', 'Click to set exact goal');
     goalLabel.addEventListener('click', promptGoal);
+    goalLabel.addEventListener('mouseenter', () => setGoalHover(true));
+    goalLabel.addEventListener('mouseleave', () => setGoalHover(false));
+    goalLabel.addEventListener('focus', () => setGoalHover(true));
+    goalLabel.addEventListener('blur', () => setGoalHover(false));
     goalLabel.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -1109,6 +1124,28 @@
     const workedMinutes = workedSeconds / 60;
     const goal = state.goalMinutes;
     const remaining = Math.max(0, goal - workedMinutes);
+    if (goalHover && remaining > 0) {
+      const remainingMs = remaining * msPerMinute;
+      const startAngle = angleFromTime(now, dayStart) - Math.PI / 2;
+      const endAngle = angleFromTime(now + remainingMs, dayStart) - Math.PI / 2;
+      const futureD = slicePath(startAngle, endAngle);
+      if (futureD) {
+        futurePath.setAttribute('d', futureD);
+        const strokeUnits = unitsPerPixel || 1;
+        futurePath.setAttribute('fill', accentFill);
+        futurePath.setAttribute('fill-opacity', '0.18');
+        futurePath.setAttribute('stroke', accentFill);
+        futurePath.setAttribute('stroke-opacity', '0.9');
+        futurePath.setAttribute('stroke-width', String(strokeUnits));
+        futurePath.style.display = '';
+      } else {
+        futurePath.removeAttribute('d');
+        futurePath.style.display = 'none';
+      }
+    } else {
+      futurePath.removeAttribute('d');
+      futurePath.style.display = 'none';
+    }
     const running = isRunning();
     const last = state.sessions[state.sessions.length - 1];
     const liveMs = running && last ? (Date.now() - last.start) : 0;
