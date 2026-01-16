@@ -420,8 +420,8 @@
     let firstActiveDate = null;
     let lastActiveDate = null;
 
-    for (let day = new Date(firstDay); day <= lastDay; day = DateUtils.addDays(day, 1)) {
-      const dayStart = day.getTime();
+    for (let cursor = new Date(firstDay); cursor <= lastDay; cursor = DateUtils.addDays(cursor, 1)) {
+      const dayStart = cursor.getTime();
       const dayStr = ymdFromMs(dayStart);
       const ignored = ignoredSet.has(dayStr);
       const dayData = buildDay(dayStart, nowMs, goalMs, ignored, dayStr);
@@ -457,14 +457,12 @@
       const monthKey = monthKeyFromDay(dayData.dayStart);
       let month = monthlyMap.get(monthKey);
       if (!month) {
-        const date = new Date(day.dayStart);
-        const startDate = new Date(date.getFullYear(), date.getMonth(), 1);
-        const endDate = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+        const meta = monthMetaFromDayStart(dayData.dayStart);
         month = {
           key: monthKey,
-          label: startDate.toLocaleDateString([], { month: 'long', year: 'numeric' }),
-          startMs: startDate.getTime(),
-          endMs: endDate.getTime(),
+          label: meta.label,
+          startMs: meta.startMs,
+          endMs: meta.endMs,
           workMs: 0,
           breakMs: 0,
           sessionCount: 0,
@@ -1442,6 +1440,17 @@
   function monthKeyFromDay(dayStart) {
     const d = new Date(dayStart);
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+  }
+
+  function monthMetaFromDayStart(dayStart) {
+    const date = new Date(dayStart);
+    const startDate = new Date(date.getFullYear(), date.getMonth(), 1);
+    const endDate = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+    return {
+      label: startDate.toLocaleDateString([], { month: 'long', year: 'numeric' }),
+      startMs: startDate.getTime(),
+      endMs: endDate.getTime()
+    };
   }
 
   function getISOWeek(date) {
